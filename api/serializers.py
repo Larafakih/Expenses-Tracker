@@ -32,6 +32,24 @@ class ExpenseSerializer(serializers.ModelSerializer):
             'user': {"read_only": True}
         }
 
+    def validate_category(self, category):
+        request = self.context.get("request")
+        if request and category.user != request.user:
+            raise serializers.ValidationError(
+                "This category does not belong to you."
+            )
+        return category
+
+    # def validate_title(self, title):
+        # if len(title)==0 :
+        #     raise serializers.ValidationError(
+        #         "The title cannot be empty."
+        #     )
+        # return title
+        # commented because: 
+        # DRF builds the serializer field with allow_blank=False.
+        #  A title of "" gets a "This field may not be blank." error before validate_title is called. 
+
 class CategoryExpenseSerializer(serializers.Serializer):
     category = serializers.CharField()
     total = serializers.DecimalField(max_digits=20, decimal_places=2)
