@@ -4,12 +4,13 @@ from django.db.models import Count, Sum
 from django.shortcuts import render
 from rest_framework import generics
 from api.filters import ExpenseFilter
-from api.models import Category, User, Expense
+from api.models import Category, User, Expense, Budget
 from api.serializers import (
     CategorySerializer,
     CreateUserSerializer,
     ExpenseSerializer,
     ExpenseStatisticsSerializer,
+    BudgetSerializer
 )
 from rest_framework import permissions
 from rest_framework import viewsets
@@ -84,3 +85,20 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             ],
         })
         return Response(serializer.data)
+
+
+class BudgetViewSet(viewsets.ModelViewSet):
+    serializer_class = BudgetSerializer
+    queryset = Budget.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # qs = Category.objects.select_related("user")
+        if not self.request.user.is_staff:
+            qs= qs.filter(user= self.request.user)
+        return qs
+
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
