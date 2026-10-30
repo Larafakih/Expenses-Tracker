@@ -3,7 +3,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, User, Budget
+from api.models import Category, Expense, RecurrentExpense, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -117,3 +117,23 @@ class BudgetSerializer(serializers.ModelSerializer):
             return 0
 
         return round((spent / obj.amount) * 100, 2)
+
+
+class RecurrentExpenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecurrentExpense    
+        fields = ["recurrent_expense_id", "title", "amount", "frequency", "start_date", "user", "category", "created_at"]   
+        extra_kwargs={
+            'user': {"read_only": True}
+        }
+
+    def validate_category(self, category):
+        request = self.context.get("request")
+        if request and category.user != request.user:
+            raise serializers.ValidationError(
+                "This category does not belong to you."
+            )
+        return category
+
+class GenerateExpensesSerializer(serializers.Serializer):
+    until_date = serializers.DateField()

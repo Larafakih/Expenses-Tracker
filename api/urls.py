@@ -8,7 +8,8 @@ urlpatterns = [
 
 router = DefaultRouter()
 router.register('categories', views.CategoryViewSet) # registering prefix to the viewset
-router.register('expenses', views.ExpenseViewSet) # registering prefix to the viewset
-router.register('budgets', views.BudgetViewSet) # registering prefix to the viewset
+router.register('expenses', views.ExpenseViewSet)
+router.register('budgets', views.BudgetViewSet)
+router.register('recurrent-expenses', views.RecurrentExpenseViewSet)
 
 urlpatterns += router.urls
