@@ -3,7 +3,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, RecurrentExpense, User, Budget
+from api.models import Category, Expense, RecurrentExpense, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -29,7 +29,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     class Meta:
         model = Expense    
-        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount"]   
+        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags"]   
         extra_kwargs={
             'user': {"read_only": True}
         }
@@ -160,3 +160,22 @@ class MonthlyReportSerializer(serializers.Serializer):
     change_percentage = serializers.DecimalField(
         max_digits=20, decimal_places=2, coerce_to_string=False, allow_null=True
     )
+
+
+class TagSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = Tag
+        fields = ["tag_id", "name", "user", "user_name", "created_at"]
+        read_only_fields = ["tag_id", "user", "created_at"]
+
+    def validate_name(self, value):
+        user = self.context["request"].user
+        qs = Tag.objects.filter(user=user, name=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"message": "You already have a tag with this name.", "code":"duplicate_tag_name"})
+        return value
+

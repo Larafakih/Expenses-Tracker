@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter
-from api.models import Category, RecurrentExpense, User, Expense, Budget
+from api.models import Category, RecurrentExpense, Tag, User, Expense, Budget
 from api.serializers import (
     CategorySerializer,
     CreateUserSerializer,
@@ -19,7 +19,8 @@ from api.serializers import (
     GenerateExpensesSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
-    RecurrentExpenseSerializer
+    RecurrentExpenseSerializer,
+    TagSerializer
 )
 from rest_framework import permissions, serializers, status
 from rest_framework import viewsets
@@ -278,5 +279,17 @@ def scheduled_dates(template, until_date):
         n += 1
 
 
+class TagViewSet(viewsets.ModelViewSet):
+    serializer_class = TagSerializer
+    queryset = Tag.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_staff:
+            qs= qs.filter(user= self.request.user)
+        return qs
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
 
