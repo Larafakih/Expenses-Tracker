@@ -113,6 +113,7 @@ class Expense(models.Model):
 # blank=True	Makes the field optional during Django model validation and in automatically generated forms.
 # related_name="generated_expenses"
 # recurrent_expense.generated_expenses.all()
+    is_deleted = models.BooleanField(default=False)
 
     class Meta:
         constraints = [

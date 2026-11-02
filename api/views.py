@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.db.models import Count, Sum
 from django.utils import timezone
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter
 from api.models import Category, RecurrentExpense, User, Expense, Budget
@@ -58,13 +58,17 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['amount', 'date']
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().filter(is_deleted=False)
         if not self.request.user.is_staff:
             qs= qs.filter(user= self.request.user)
         return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    def perform_destroy(self, instance):
+        instance.is_deleted = True
+        instance.save(update_fields=['is_deleted'])
 
     @action(detail=False, methods=['get'], url_path='statistics')
     def statistics(self, request):
@@ -90,6 +94,26 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             ],
         })
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='trash')
+    def get_soft_deleted_expenses(self, request):
+        expenses = Expense.objects.filter(is_deleted=True)
+        if not request.user.is_staff:
+            expenses = expenses.filter(user=request.user)
+        serializer = self.get_serializer(expenses, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='restore')
+    def restore_expense (self, request, pk):
+        qs = Expense.objects.filter(is_deleted=True)
+        if not request.user.is_staff:
+            qs = qs.filter(user=request.user)
+        expense = get_object_or_404(qs, pk=pk)
+        expense.is_deleted = False
+        expense.save(update_fields=['is_deleted'])
+        serializer = self.get_serializer(expense)
+        return Response(serializer.data)
+
 
 
 class BudgetViewSet(viewsets.ModelViewSet):
