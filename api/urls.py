@@ -3,7 +3,8 @@ from api import views
 from rest_framework.routers import DefaultRouter
 
 urlpatterns = [
-    path('users/', views.UserCreate.as_view())
+    path('users/', views.UserCreate.as_view()),
+    path('reports/monthly/', views.MonthlyReportView.as_view()),
     ]
 
 router = DefaultRouter()

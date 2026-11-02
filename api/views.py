@@ -15,6 +15,8 @@ from api.serializers import (
     ExpenseStatisticsSerializer,
     BudgetSerializer,
     GenerateExpensesSerializer,
+    MonthlyReportQuerySerializer,
+    MonthlyReportSerializer,
     RecurrentExpenseSerializer
 )
 from rest_framework import permissions, serializers, status
@@ -23,6 +25,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 
 
@@ -172,6 +175,59 @@ class RecurrentExpenseViewSet(viewsets.ModelViewSet):
 
         Expense.objects.bulk_create(to_create)
         return Response({"created": len(to_create)}, status=status.HTTP_201_CREATED)
+
+
+class MonthlyReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        params = MonthlyReportQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        month = params.validated_data["month"]
+        year = params.validated_data["year"]
+
+
+        start = month_start(year, month)
+        end = month_start(year, month + 1)
+        previous_start = month_start(year, month - 1)
+
+        user_expenses = Expense.objects.filter(user=request.user, is_deleted=False)
+        expenses = user_expenses.filter(date__gte=start, date__lt=end)
+
+        totals = expenses.aggregate(
+            expense_count=Count('expense_id'),
+            total_spent=Sum('amount'),
+        )
+        total_spent = totals['total_spent'] or Decimal('0.00')
+        previous_total = (
+            user_expenses
+            .filter(date__gte=previous_start, date__lt=start)
+            .aggregate(total=Sum('amount'))['total']
+            or Decimal('0.00')
+        )
+
+        serializer = MonthlyReportSerializer({
+            'month': month,
+            'year': year,
+            'total_spent': total_spent,
+            'expense_count': totals['expense_count'],
+            'largest_expense': expenses.order_by('-amount').first(),
+            'previous_month_total': previous_total,
+            'change_percentage': percentage(total_spent - previous_total, previous_total),
+        })
+        return Response(serializer.data)
+
+
+def month_start(year, month):
+    """Aware datetime at midnight on the 1st; month may overflow past 1..12 (e.g. 13 -> next January)."""
+    month_index = month - 1
+    return timezone.make_aware(datetime(year + month_index // 12, month_index % 12 + 1, 1))
+
+
+def percentage(part, whole):
+    if not whole:
+        return None
+    return round(part / whole * 100, 2)
 
 
 

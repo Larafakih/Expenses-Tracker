@@ -137,3 +137,26 @@ class RecurrentExpenseSerializer(serializers.ModelSerializer):
 
 class GenerateExpensesSerializer(serializers.Serializer):
     until_date = serializers.DateField()
+
+
+class MonthlyReportQuerySerializer(serializers.Serializer):
+    month = serializers.IntegerField(min_value=1, max_value=12)
+    year = serializers.IntegerField(min_value=2000, max_value=9999)
+
+
+class LargestExpenseSerializer(serializers.Serializer):
+    title = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=20, decimal_places=2)
+
+
+class MonthlyReportSerializer(serializers.Serializer):
+    month = serializers.IntegerField()
+    year = serializers.IntegerField()
+    total_spent = serializers.DecimalField(max_digits=20, decimal_places=2)
+    expense_count = serializers.IntegerField()
+    largest_expense = LargestExpenseSerializer(allow_null=True)
+    previous_month_total = serializers.DecimalField(max_digits=20, decimal_places=2)
+    # coerce_to_string=False renders a JSON number (25.0) instead of a string ("25.00")
+    change_percentage = serializers.DecimalField(
+        max_digits=20, decimal_places=2, coerce_to_string=False, allow_null=True
+    )
