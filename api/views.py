@@ -1,8 +1,10 @@
 from calendar import monthrange
+import csv
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, Sum
+from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
@@ -116,6 +118,29 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         expense.save(update_fields=['is_deleted'])
         serializer = self.get_serializer(expense)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export_expenses (self, request):
+        # 1. Fetch and serialize data
+        expenses = self.filter_queryset(Expense.objects.filter(user=request.user, is_deleted=False))
+        serializer = ExpenseSerializer(expenses, many=True)
+
+        # 2. Create the HttpResponse object with CSV headers
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="exported_data.csv"'
+
+        writer = csv.writer(response)
+        
+        # 3. Write header row based on serializer fields
+        fields = ["title", "description", "date","user", "created_at",  "category_name" , "amount"]
+        writer.writerow([field.replace('_', ' ').title() for field in fields])
+        
+        # 4. Write data rows
+        for row in serializer.data:
+            writer.writerow([row.get(field) for field in fields])
+            
+        return response
+
 
 
 
