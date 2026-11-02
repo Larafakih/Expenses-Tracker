@@ -87,7 +87,27 @@ class RecurrentExpense(models.Model):
     def __str__(self):
         return f"{self.title} - {self.frequency}"
 
+class Tag(models.Model):
+    tag_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=50)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="tags")
+    created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(name=""),
+                name="tag_name_not_empty",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "name"],
+                name="unique_tag_name_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+    
 class Expense(models.Model):
     expense_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200)
@@ -114,6 +134,7 @@ class Expense(models.Model):
 # related_name="generated_expenses"
 # recurrent_expense.generated_expenses.all()
     is_deleted = models.BooleanField(default=False)
+    tags = models.ManyToManyField(Tag, blank=True, related_name="expenses")
 
     class Meta:
         constraints = [

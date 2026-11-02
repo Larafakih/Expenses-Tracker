@@ -12,5 +12,6 @@ router.register('categories', views.CategoryViewSet) # registering prefix to the
 router.register('expenses', views.ExpenseViewSet)
 router.register('budgets', views.BudgetViewSet)
 router.register('recurrent-expenses', views.RecurrentExpenseViewSet)
+router.register('tags', views.TagViewSet)
 
 urlpatterns += router.urls
