@@ -20,7 +20,7 @@ from api.serializers import (
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
     RecurrentExpenseSerializer,
-    TagSerializer
+    TagSerializer,
 )
 from rest_framework import permissions, serializers, status
 from rest_framework import viewsets
@@ -152,7 +152,6 @@ class BudgetViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # qs = Category.objects.select_related("user")
         if not self.request.user.is_staff:
             qs= qs.filter(user= self.request.user)
         return qs

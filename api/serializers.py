@@ -42,6 +42,14 @@ class ExpenseSerializer(serializers.ModelSerializer):
             )
         return category
 
+    def validate_tags(self, tags):
+        request = self.context.get("request")
+        if request and any(tag.user != request.user for tag in tags):
+            raise serializers.ValidationError(
+                "This tag does not belong to you."
+            )
+        return tags
+
     # def validate_title(self, title):
         # if len(title)==0 :
         #     raise serializers.ValidationError(
