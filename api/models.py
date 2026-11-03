@@ -156,3 +156,56 @@ class Expense(models.Model):
         return f"{self.title} ({self.amount}) - {self.category.name}"
 
 
+class Goal(models.Model):
+    goal_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200)
+    target_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    target_date = models.DateField()
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="goals")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(target_amount__gt=0),
+                name="goal_target_amount_gt_zero",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(title=""),
+                name="goal_title_not_empty",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "title", "target_date", "target_amount"],
+                name="unique_goal",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.target_amount}) by {self.target_date}"
+
+
+class SavingContribution(models.Model):
+    contribution_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    goal = models.ForeignKey(Goal, on_delete=models.CASCADE, related_name="contributions")
+    amount = models.DecimalField(
+            max_digits=20,
+            decimal_places=2,
+            validators=[MinValueValidator(Decimal("0.01"))],
+            )
+    date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="saving_contribution_amount_gt_zero",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.amount} towards {self.goal.title} on {self.date}"

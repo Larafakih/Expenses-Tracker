@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter
-from api.models import Category, RecurrentExpense, Tag, User, Expense, Budget
+from api.models import Category, Goal, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     CategorySerializer,
     CreateUserSerializer,
@@ -17,9 +17,11 @@ from api.serializers import (
     ExpenseStatisticsSerializer,
     BudgetSerializer,
     GenerateExpensesSerializer,
+    GoalSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
     RecurrentExpenseSerializer,
+    SavingContributionSerializer,
     TagSerializer,
 )
 from rest_framework import permissions, serializers, status
@@ -291,4 +293,49 @@ class TagViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+class GoalViewset(viewsets.ModelViewSet):
+    serializer_class = GoalSerializer
+    queryset = Goal.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+            qs = super().get_queryset()
+            if not self.request.user.is_staff:
+                qs= qs.filter(user= self.request.user)
+            return qs
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.action in ("create_contribution", "list_contributions"):
+            return SavingContributionSerializer
+        return super().get_serializer_class()
+
+    @action(detail=True, methods=['post'], url_path='contributions')
+    def create_contribution(self, request, pk=None):
+        goal = self.get_object()  # 404 if it isn't the user's goal
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(goal=goal)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @create_contribution.mapping.get
+    def list_contributions(self, request, pk=None):
+        goal = self.get_object()  # 404 if it isn't the user's goal
+        contributions = goal.contributions.all()
+        serializer = self.get_serializer(contributions, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+        
+
+
+class ContributionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = SavingContributionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = SavingContribution.objects.all()
+    lookup_field = 'pk'  # Default lookup field
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_staff:
+            qs= qs.filter(goal__user= self.request.user)
+        return qs

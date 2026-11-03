@@ -3,7 +3,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, RecurrentExpense, Tag, User, Budget
+from api.models import Category, Expense, Goal, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -187,3 +187,14 @@ class TagSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"message": "You already have a tag with this name.", "code":"duplicate_tag_name"})
         return value
 
+class GoalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Goal
+        fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at"]
+        read_only_fields = [ "user", "created_at"]
+
+class SavingContributionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavingContribution
+        fields = ["contribution_id", "goal", "amount", "date", "created_at"]
+        read_only_fields = [ "goal", "contribution_id", "created_at"]
