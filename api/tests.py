@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Category, Expense, RecurrentExpense, User
+from api.models import Category, Expense, RecurrentExpense, Tag, User
 from api.views import month_start, scheduled_dates
 
 
@@ -137,3 +137,43 @@ class GenerateRecurrentExpenses(APITestCase):
         # And the database holds exactly 5, not 10.
         response3 = self.client.get("/expenses/")
         self.assertEqual(len(response3.data), 5)
+
+class TagOwnershipValidationTest(APITestCase):
+    def setUp(self):
+        self.user1 = User.objects.create_user(username="lara1", password="pass12345")
+        self.tag1 = Tag.objects.create(user= self.user1, name="tag user1")
+        self.category1 = Category.objects.create(name="Food", user=self.user1)
+
+        self.user2 = User.objects.create_user(username="lara2", password="pass12345")
+        self.tag2 = Tag.objects.create(user= self.user2, name="tag user2")
+        self.category2 = Category.objects.create(name="Food", user=self.user2)
+
+    def test_assign_tag_to_expense_happy_flow(self):
+        self.client.force_authenticate(user=self.user1)  
+
+        creation_response = self.client.post(f"/expenses/", data={
+                                "title":"Lunch",
+                                "amount":"12.50",
+                                "user" :self.user1.id,
+                                "category":self.category1.category_id,
+                                "date":timezone.now(),
+                                "tags" : [self.tag1.tag_id]
+                                            })
+        
+        self.assertEqual(creation_response.status_code, status.HTTP_201_CREATED)
+
+    def test_tag_ownership_validation_test(self):
+        self.client.force_authenticate(user=self.user2)  
+        creation_response = self.client.post(f"/expenses/", data={
+                                        "title":"Lunch",
+                                        "amount":"12.50",
+                                        "user" :self.user2.id,
+                                        "category":self.category2.category_id,
+                                        "date":timezone.now(),
+                                        "tags" : [self.tag1.tag_id]
+                                                    })
+        
+        self.assertEqual(creation_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("tags", creation_response.data)
+        self.assertEqual(Expense.objects.count(), 0)
+
