@@ -100,6 +100,15 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(expense)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='favorites')
+    def list_favorites(self, request):
+        favorite_expenses = Expense.objects.filter(is_favorite=True)
+        if not request.user.is_staff:
+            favorite_expenses = favorite_expenses.filter(user=request.user, is_deleted=False)
+        serializer = self.get_serializer(favorite_expenses, many=True)
+        return Response(serializer.data)
+
+
     @action(detail=False, methods=['get'], url_path='statistics')
     def statistics(self, request):
         expenses = self.filter_queryset(self.get_queryset()).order_by()
