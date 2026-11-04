@@ -137,6 +137,7 @@ class Expense(models.Model):
 # recurrent_expense.generated_expenses.all()
     is_deleted = models.BooleanField(default=False)
     tags = models.ManyToManyField(Tag, blank=True, related_name="expenses")
+    is_favorite = models.BooleanField(default=False)
 
     class Meta:
         constraints = [

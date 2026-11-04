@@ -22,6 +22,7 @@ class ExpenseFilter(django_filters.FilterSet):
     date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
     date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
     tags = UUIDInFilter(field_name="tags__tag_id", lookup_expr="in", distinct=True)
+    is_favorite = django_filters.BooleanFilter(field_name="is_favorite")
 
     class Meta:
         model = Expense
