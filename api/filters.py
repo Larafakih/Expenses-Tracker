@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.utils import timezone
 import django_filters
 
 from rest_framework import filters
@@ -32,20 +35,31 @@ class ExpenseFilter(django_filters.FilterSet):
 class GoalFilter(django_filters.FilterSet):
     # ?completed=true / ?completed=false
     completed = django_filters.BooleanFilter(method="filter_completed")
+    upcoming = django_filters.BooleanFilter(
+        method="filter_upcoming"
+    )
 
     class Meta:
         model = Goal
         fields = []
 
     def filter_completed(self, queryset, name, value):
-        # same rule as Goal.is_completed: total saved >= target
         queryset = queryset.annotate(
-            saved=Coalesce(
-                Sum("contributions__amount"),
-                Value(Decimal("0.00")),
-                output_field=DecimalField(max_digits=20, decimal_places=2),
-            )
+            saved=Sum("contributions__amount", default=0)
         )
+
         if value:
             return queryset.filter(saved__gte=F("target_amount"))
+
         return queryset.filter(saved__lt=F("target_amount"))
+
+    def filter_upcoming(self, queryset, name, value):
+        if value:
+            today = timezone.localdate()
+            end_date = today + timedelta(days=30)
+
+            return queryset.filter(
+                target_date__range=(today, end_date)
+            )
+
+        return queryset
