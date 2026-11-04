@@ -177,3 +177,49 @@ class TagOwnershipValidationTest(APITestCase):
         self.assertIn("tags", creation_response.data)
         self.assertEqual(Expense.objects.count(), 0)
 
+class ContributionsTest(APITestCase):
+    def setUp(self):
+        self.user1 = User.objects.create_user(username="lara1", password="pass12345")
+
+    def test_validation_on_negative_contribution_amount(self):
+        self.client.force_authenticate(user=self.user1)  
+        created_goal = self.client.post(f"/saving-goals/", data = {
+                        "title": "Camera",
+                        "target_amount": 500,
+                        "target_date": "2027-06-30"
+                                      })
+        created_contribution = self.client.post(f"/saving-goals/{created_goal.data["goal_id"]}/contributions/",
+                            data={
+                                    "amount": -20,
+                                    "date": "2026-11-04"
+                                })
+        self.assertEqual(created_contribution.status_code, status.HTTP_400_BAD_REQUEST)
+
+        contributions_list = self.client.get(f"/saving-goals/{created_goal.data["goal_id"]}/contributions/")
+
+        self.assertEqual(len(contributions_list.data), 0)
+
+    def test_contributions_are_separate_per_goal(self):
+        self.client.force_authenticate(user=self.user1)
+        created_goal1 = self.client.post(f"/saving-goals/", data = {
+                                "title": "Camera",
+                                "target_amount": 500,
+                                "target_date": "2027-06-30"
+                                              }) 
+        created_contribution1 = self.client.post(f"/saving-goals/{created_goal1.data["goal_id"]}/contributions/",
+                                    data={
+                                            "amount": 20,
+                                            "date": "2026-11-04"
+                                        })       
+        created_goal2 = self.client.post(f"/saving-goals/", data = {
+                                        "title": "Hair Curler",
+                                        "target_amount": 100,
+                                        "target_date": "2027-06-30"
+                                                      }) 
+        created_contribution2 = self.client.post(f"/saving-goals/{created_goal2.data["goal_id"]}/contributions/",
+                                            data={
+                                                    "amount": 20,
+                                                    "date": "2026-11-04"
+                                                })  
+        contributions_list = self.client.get(f"/saving-goals/{created_goal1.data["goal_id"]}/contributions/")
+        self.assertEqual(len(contributions_list.data), 1)

@@ -1,4 +1,5 @@
 from dataclasses import field, fields
+from operator import concat
 from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
@@ -187,14 +188,21 @@ class TagSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"message": "You already have a tag with this name.", "code":"duplicate_tag_name"})
         return value
 
-class GoalSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Goal
-        fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at"]
-        read_only_fields = [ "user", "created_at"]
-
 class SavingContributionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingContribution
         fields = ["contribution_id", "goal", "amount", "date", "created_at"]
         read_only_fields = [ "goal", "contribution_id", "created_at"]
+
+class GoalSerializer(serializers.ModelSerializer):
+    # "contributions" is the related_name on SavingContribution.goal
+    contributions = SavingContributionSerializer(many=True, read_only=True)
+    # computed on the Goal model (properties), so they are read-only here
+    is_completed = serializers.BooleanField(read_only=True)
+    remaining_amount = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    progress_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = Goal
+        fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at", "contributions", "is_completed", "remaining_amount", "progress_percentage"]
+        read_only_fields = [ "user", "created_at"]

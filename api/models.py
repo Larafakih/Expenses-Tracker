@@ -4,6 +4,8 @@ from decimal import Decimal
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models import Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 
@@ -187,10 +189,33 @@ class Goal(models.Model):
     def __str__(self):
         return f"{self.title} ({self.target_amount}) by {self.target_date}"
 
+    @property
+    def total_saved(self):
+        # Sum is None when there are no contributions yet
+        return self.contributions.aggregate(
+            total=Coalesce(Sum("amount"), Decimal("0.00"))
+        )["total"]
+
+    @property
+    def remaining_amount(self):
+        return max(self.target_amount - self.total_saved, Decimal("0.00"))
+
+    @property
+    def progress_percentage(self):
+        # capped at 100 when the user saves more than the target
+        progress = min(self.total_saved / self.target_amount * 100, Decimal("100"))
+        return round(progress, 2)
+
+    @property
+    def is_completed(self):
+        return self.total_saved >= self.target_amount
+
 
 class SavingContribution(models.Model):
     contribution_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # this line => contribution.goal and goal.contributions
     goal = models.ForeignKey(Goal, on_delete=models.CASCADE, related_name="contributions")
+    
     amount = models.DecimalField(
             max_digits=20,
             decimal_places=2,

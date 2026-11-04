@@ -8,7 +8,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
-from api.filters import ExpenseFilter
+from api.filters import ExpenseFilter, GoalFilter
 from api.models import Category, Goal, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     CategorySerializer,
@@ -297,6 +297,7 @@ class GoalViewset(viewsets.ModelViewSet):
     serializer_class = GoalSerializer
     queryset = Goal.objects.all()
     permission_classes = [permissions.IsAuthenticated]
+    filterset_class = GoalFilter
 
     def get_queryset(self):
             qs = super().get_queryset()
