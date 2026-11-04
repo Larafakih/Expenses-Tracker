@@ -30,9 +30,10 @@ class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     class Meta:
         model = Expense    
-        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags"]   
+        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags", "is_favorite"]   
         extra_kwargs={
-            'user': {"read_only": True}
+            'user': {"read_only": True},
+            "is_favorite" : {"read_only": True}
         }
 
     def validate_category(self, category):

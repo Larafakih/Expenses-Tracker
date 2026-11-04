@@ -78,6 +78,28 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         instance.is_deleted = True
         instance.save(update_fields=['is_deleted'])
 
+    @action(detail=True, methods=['post'], url_path='favorite')
+    def set_as_favorite(self, request, pk):
+        qs = Expense.objects
+        if not request.user.is_staff:
+            qs = qs.filter(user=request.user, is_deleted= False)
+        expense = get_object_or_404(qs, pk=pk)
+        expense.is_favorite = True
+        expense.save(update_fields=['is_favorite'])
+        serializer = self.get_serializer(expense)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='unfavorite')
+    def unfavorite(self, request, pk):
+        qs = Expense.objects
+        if not request.user.is_staff:
+            qs = qs.filter(user=request.user, is_deleted= False)
+        expense = get_object_or_404(qs, pk=pk)
+        expense.is_favorite = False
+        expense.save(update_fields=['is_favorite'])
+        serializer = self.get_serializer(expense)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['get'], url_path='statistics')
     def statistics(self, request):
         expenses = self.filter_queryset(self.get_queryset()).order_by()
