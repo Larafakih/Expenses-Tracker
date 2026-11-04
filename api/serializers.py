@@ -1,4 +1,5 @@
 from dataclasses import field, fields
+from operator import concat
 from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
@@ -187,14 +188,31 @@ class TagSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"message": "You already have a tag with this name.", "code":"duplicate_tag_name"})
         return value
 
-class GoalSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Goal
-        fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at"]
-        read_only_fields = [ "user", "created_at"]
-
 class SavingContributionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingContribution
         fields = ["contribution_id", "goal", "amount", "date", "created_at"]
         read_only_fields = [ "goal", "contribution_id", "created_at"]
+
+class GoalSerializer(serializers.ModelSerializer):
+    # "contributions" is the related_name on SavingContribution.goal
+    contributions = SavingContributionSerializer(many=True, read_only=True)
+    is_completed = serializers.SerializerMethodField()
+    remaining_amount = serializers.SerializerMethodField()
+    progress_percentage = serializers.SerializerMethodField()
+    def get_is_completed(self, obj):
+        total_contributions = obj.contributions.aggregate(Sum("amount"))
+        return total_contributions == obj.target_amount
+    def get_remaining_amount(self, obj):
+        total_contributions = obj.contributions.aggregate(Sum("amount"))
+        remaining = obj.target_amount - total_contributions["amount__sum"]
+        return remaining
+    
+    def get_progress_percentage(self, obj):
+        total_contributions = obj.contributions.aggregate(Sum("amount"))
+        progress = total_contributions["amount__sum"]*100/obj.target_amount
+        return progress
+    class Meta:
+        model = Goal
+        fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at", "contributions", "is_completed", "remaining_amount", "progress_percentage"]
+        read_only_fields = [ "user", "created_at"]

@@ -296,7 +296,7 @@ class TagViewSet(viewsets.ModelViewSet):
 class GoalViewset(viewsets.ModelViewSet):
     serializer_class = GoalSerializer
     queryset = Goal.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated] 
 
     def get_queryset(self):
             qs = super().get_queryset()

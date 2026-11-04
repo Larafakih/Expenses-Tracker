@@ -190,7 +190,9 @@ class Goal(models.Model):
 
 class SavingContribution(models.Model):
     contribution_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # this line => contribution.goal and goal.contributions
     goal = models.ForeignKey(Goal, on_delete=models.CASCADE, related_name="contributions")
+    
     amount = models.DecimalField(
             max_digits=20,
             decimal_places=2,
