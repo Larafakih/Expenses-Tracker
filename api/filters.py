@@ -23,6 +23,8 @@ class ExpenseFilter(django_filters.FilterSet):
     date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
     tags = UUIDInFilter(field_name="tags__tag_id", lookup_expr="in", distinct=True)
     is_favorite = django_filters.BooleanFilter(field_name="is_favorite")
+    payment_method = django_filters.UUIDFilter(field_name="payment_method__payment_method_id", lookup_expr="exact", )
+    payment_method__isnull = django_filters.BooleanFilter(field_name="payment_method", lookup_expr="isnull")
 
     class Meta:
         model = Expense

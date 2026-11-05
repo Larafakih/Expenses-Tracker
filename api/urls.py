@@ -16,5 +16,6 @@ router.register('budgets', views.BudgetViewSet)
 router.register('recurrent-expenses', views.RecurrentExpenseViewSet)
 router.register('tags', views.TagViewSet)
 router.register('saving-goals', views.GoalViewset)
+router.register('payment-methods', views.PaymentMethodViewSet)
 
 urlpatterns += router.urls
