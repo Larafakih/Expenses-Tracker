@@ -1,8 +1,9 @@
 # Expenses Tracker
 
 A REST API for tracking personal expenses, built with **Django** and **Django REST Framework**.
-Users can organise expenses into categories and tags, set monthly budgets, schedule recurring
-expenses, get monthly reports and statistics, export to CSV, and track saving goals.
+Users can organise expenses into categories and tags, record how each expense was paid, set
+monthly budgets, schedule recurring expenses, get monthly reports and statistics, export to CSV,
+and track saving goals.
 
 ## Tech stack
 
@@ -160,6 +161,9 @@ All endpoints except `POST /users/` and the token endpoints require authenticati
 | Saving goals | `/saving-goals/`, `/saving-goals/{id}/` |
 | Goal contributions | `GET` / `POST /saving-goals/{id}/contributions/` |
 | Single contribution | `GET` / `PUT` / `PATCH` / `DELETE /contributions/{id}/` |
+| Payment methods | `/payment-methods/`, `/payment-methods/{id}/` |
+| Set default payment method | `POST /payment-methods/{id}/set-default/` |
+| Payment method statistics | `GET /payment-methods/statistics/` |
 
 ### Filtering, search and ordering on expenses
 
@@ -171,6 +175,8 @@ All endpoints except `POST /users/` and the token endpoints require authenticati
 | `amount_min` / `amount_max` | `?amount_min=10&amount_max=50` | Amount range (inclusive) |
 | `date_from` / `date_to` | `?date_from=2026-01-01&date_to=2026-01-31` | Date range (inclusive) |
 | `tags` | `?tags=<uuid1>,<uuid2>` | Expenses that have **any** of these tags |
+| `payment_method` | `?payment_method=<uuid>` | Expenses paid with one payment method |
+| `payment_method__isnull` | `?payment_method__isnull=true` | `true`: expenses with no payment method; `false`: expenses that have one |
 | `search` | `?search=coffee` | Search in the title |
 | `ordering` | `?ordering=-amount` | Sort by `amount` or `date` (`-` for descending) |
 
@@ -193,7 +199,8 @@ All endpoints except `POST /users/` and the token endpoints require authenticati
   that the object exists.
 - **Staff users can see everyone's data** (categories, expenses, budgets, tags, goals, etc.).
 - **Cross-user references are rejected.** An expense, budget or recurrent expense can only use a
-  category owned by the same user, and an expense can only be tagged with the user's own tags.
+  category owned by the same user, and an expense can only use the user's own tags and payment
+  method.
 - All primary keys are **UUIDs**, so IDs cannot be guessed or enumerated.
 
 ### Amounts
@@ -228,6 +235,45 @@ All endpoints except `POST /users/` and the token endpoints require authenticati
 - Tag names cannot be empty.
 - An expense can have many tags; filtering by several tags returns expenses that have any of them,
   without duplicates.
+
+### Payment methods
+
+- Each user creates their own payment methods (for example *Cash*, *Visa*, *Bank Transfer*).
+  A payment method has a `name`, an `is_default` flag (default `false`) and a `created_at`
+  timestamp.
+- Names cannot be empty, and a user cannot have two payment methods with the same name,
+  **ignoring case** (*Visa* and *visa* count as the same). Two different users can both have
+  *Visa*. This is enforced by database constraints.
+- A user can have **only one default** payment method (database constraint).
+  `POST /payment-methods/{id}/set-default/` makes a method the default and, in the same
+  transaction, removes the default flag from the user's previous default.
+- Users can only see and use their own payment methods. Another user's payment method returns
+  **404**.
+
+#### Payment methods on expenses
+
+- An expense can have **one** payment method, and a payment method can be used by many expenses.
+  Set it with the `payment_method` field (a payment method UUID) when creating or updating an
+  expense. Expense responses also include a read-only `payment_method_name`.
+- The field is **optional**: expenses without a payment method, including all expenses created
+  before this feature, stay valid and have `payment_method: null`.
+- Using another user's payment method on an expense returns a validation error:
+  *"This payment method does not belong to you."*
+- **Deleting a payment method keeps its expenses.** Their `payment_method` is set to `null`.
+
+#### Payment method statistics
+
+`GET /payment-methods/statistics/` returns one row per payment method for the requesting user's
+non-deleted expenses (staff see all users):
+
+```json
+[
+  {"payment_method_id": null, "name": null, "total_spent": "5864.00", "expense_count": 77},
+  {"payment_method_id": "8df13687-098c-41cb-a272-eb4f1e0e1e7b", "name": "Cash", "total_spent": "200.00", "expense_count": 1}
+]
+```
+
+The row with `null` id and name groups the expenses that have no payment method.
 
 ### Budgets
 

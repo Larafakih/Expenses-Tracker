@@ -4,7 +4,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, Goal, RecurrentExpense, SavingContribution, Tag, User, Budget
+from api.models import Category, Expense, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -28,9 +28,10 @@ class CategorySerializer(serializers.ModelSerializer):
     
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
+    payment_method_name = serializers.CharField(source='payment_method.name', read_only=True, default=None)
     class Meta:
-        model = Expense    
-        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags", "is_favorite"]   
+        model = Expense
+        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags", "is_favorite", "payment_method", "payment_method_name"]
         extra_kwargs={
             'user': {"read_only": True},
             "is_favorite" : {"read_only": True}
@@ -52,6 +53,15 @@ class ExpenseSerializer(serializers.ModelSerializer):
             )
         return tags
 
+    def validate_payment_method(self, payment_method):
+        # None is allowed: an expense may have no payment method.
+        request = self.context.get("request")
+        if payment_method and request and payment_method.user != request.user:
+            raise serializers.ValidationError(
+                "This payment method does not belong to you."
+            )
+        return payment_method
+
     # def validate_title(self, title):
         # if len(title)==0 :
         #     raise serializers.ValidationError(
@@ -71,6 +81,12 @@ class ExpenseStatisticsSerializer(serializers.Serializer):
     total_expenses = serializers.IntegerField()
     total_amount = serializers.DecimalField(max_digits=20, decimal_places=2)
     by_category = CategoryExpenseSerializer(many=True)
+
+class PaymentMethodStatisticsSerializer(serializers.Serializer):
+    payment_method_id = serializers.UUIDField(allow_null=True)
+    name = serializers.CharField(allow_null=True)
+    total_spent = serializers.DecimalField(max_digits=20, decimal_places=2)
+    expense_count = serializers.IntegerField()
 
 class BudgetSerializer(serializers.ModelSerializer):
     spent = serializers.SerializerMethodField()
@@ -206,4 +222,10 @@ class GoalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Goal
         fields = ["goal_id", "title", "target_amount", "target_date", "user", "created_at", "contributions", "is_completed", "remaining_amount", "progress_percentage"]
+        read_only_fields = [ "user", "created_at"]
+
+class PaymentMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentMethod
+        fields = ["payment_method_id", "name", "user", "is_default", "created_at"]
         read_only_fields = [ "user", "created_at"]

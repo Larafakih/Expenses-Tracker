@@ -3,13 +3,13 @@ import csv
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Count, F, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter, GoalFilter
-from api.models import Category, Goal, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
+from api.models import Category, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     CategorySerializer,
     CreateUserSerializer,
@@ -20,6 +20,8 @@ from api.serializers import (
     GoalSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
+    PaymentMethodSerializer,
+    PaymentMethodStatisticsSerializer,
     RecurrentExpenseSerializer,
     SavingContributionSerializer,
     TagSerializer,
@@ -31,6 +33,9 @@ from rest_framework import filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db import transaction
+
+
 
 
 
@@ -371,3 +376,59 @@ class ContributionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         if not self.request.user.is_staff:
             qs= qs.filter(goal__user= self.request.user)
         return qs
+
+class PaymentMethodViewSet(viewsets.ModelViewSet):
+    serializer_class = PaymentMethodSerializer
+    queryset = PaymentMethod.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_staff:
+            qs= qs.filter(user= self.request.user)
+        return qs
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='statistics',
+        serializer_class=PaymentMethodStatisticsSerializer,
+    )
+    def payment_methods_statistics(self, request):
+        expenses = Expense.objects.filter(is_deleted=False)
+        if not request.user.is_staff:
+            expenses = expenses.filter(user=request.user)
+
+        # One row per payment method; expenses without one are grouped under null.
+        by_pm = (
+            expenses
+            .values('payment_method_id', name=F('payment_method__name'))
+            .annotate(
+                total_spent=Sum('amount'),
+                expense_count=Count('expense_id'),
+            )
+            .order_by('name')
+        )
+        serializer = self.get_serializer(by_pm, many=True)
+        return Response(serializer.data)
+            
+    @action(detail=True, methods=['post'], url_path='set-default')
+    def set_payment_method_as_default(self, request, pk=None):
+        pm = self.get_object()  # already limited to the user's own methods by get_queryset()
+        with transaction.atomic():
+            PaymentMethod.objects.filter(
+                user=pm.user, is_default=True
+            ).exclude(pk=pm.pk).update(is_default=False)
+            pm.is_default = True
+            pm.save(update_fields=['is_default'])
+        serializer = self.get_serializer(pm)
+        return Response(serializer.data)
+
+
+
+
+        
+
+             

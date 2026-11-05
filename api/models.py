@@ -2,10 +2,11 @@ import uuid
 from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Sum
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Lower
 from django.utils import timezone
 
 
@@ -109,6 +110,38 @@ class Tag(models.Model):
 
     def __str__(self):
         return self.name
+
+class PaymentMethod(models.Model):
+    payment_method_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="paymentmethods")
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(name=""),
+                name="payment_method_name_not_empty",
+            ),
+            # A user cannot have two payment methods with the same name (case-insensitive).
+            models.UniqueConstraint(
+                Lower("name"),
+                "user",
+                name="unique_payment_method_name_per_user_ci",
+                violation_error_message="You already have a payment method with this name.",
+            ),
+            # A user can have only one default payment method.
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(is_default=True),
+                name="one_default_payment_method_per_user",
+                violation_error_message="You can only have one default payment method.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
     
 class Expense(models.Model):
     expense_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -138,6 +171,16 @@ class Expense(models.Model):
     is_deleted = models.BooleanField(default=False)
     tags = models.ManyToManyField(Tag, blank=True, related_name="expenses")
     is_favorite = models.BooleanField(default=False)
+    # One payment method per expense; one payment method -> many expenses.
+    # Optional (null/blank) so existing expenses stay valid, and SET_NULL so
+    # deleting a payment method keeps its expenses.
+    payment_method = models.ForeignKey(
+        PaymentMethod,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="expenses",
+    )
 
     class Meta:
         constraints = [
@@ -154,6 +197,18 @@ class Expense(models.Model):
             name="unique_recurrent_expense_date"
         )
         ]
+
+    def clean(self):
+        super().clean()
+        # Users cannot assign another user's payment method to an expense.
+        if (
+            self.payment_method_id
+            and self.user_id
+            and self.payment_method.user_id != self.user_id
+        ):
+            raise ValidationError(
+                {"payment_method": "This payment method does not belong to you."}
+            )
 
     def __str__(self):
         return f"{self.title} ({self.amount}) - {self.category.name}"
@@ -235,3 +290,4 @@ class SavingContribution(models.Model):
 
     def __str__(self):
         return f"{self.amount} towards {self.goal.title} on {self.date}"
+
