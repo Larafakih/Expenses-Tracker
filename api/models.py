@@ -3,10 +3,11 @@ from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Sum
-from django.db.models.functions import Coalesce, Lower
+from django.db.models.functions import Coalesce, Length, Lower, Trim
+from django.db.models.lookups import GreaterThan, LessThanOrEqual
 from django.utils import timezone
 
 
@@ -212,6 +213,37 @@ class Expense(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.amount}) - {self.category.name}"
+
+class ExpenseNote(models.Model):
+    note_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    expense = models.ForeignKey(Expense, on_delete=models.CASCADE, related_name="notes")
+    content = models.TextField(max_length=1000, validators=[MaxLengthValidator(1000)])
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            # Required, and not empty or whitespace-only.
+            models.CheckConstraint(
+                condition=GreaterThan(Length(Trim("content")), 0),
+                name="expense_note_content_not_blank",
+            ),
+            # At most 1,000 characters (TextField max_length is not enforced by the database).
+            models.CheckConstraint(
+                condition=LessThanOrEqual(Length("content"), 1000),
+                name="expense_note_content_max_1000",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        # The database Trim only strips spaces; this also rejects tabs and newlines.
+        if not (self.content or "").strip():
+            raise ValidationError({"content": "Note content cannot be empty."})
+
+    def __str__(self):
+        return self.content[:50]
 
 
 class Goal(models.Model):
