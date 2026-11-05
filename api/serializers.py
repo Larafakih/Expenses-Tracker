@@ -4,7 +4,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
+from api.models import Category, Expense, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -29,13 +29,20 @@ class CategorySerializer(serializers.ModelSerializer):
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     payment_method_name = serializers.CharField(source='payment_method.name', read_only=True, default=None)
+    notes_count = serializers.SerializerMethodField()
     class Meta:
         model = Expense
-        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category", "category_name" , "amount", "tags", "is_favorite", "payment_method", "payment_method_name"]
+        fields = ["expense_id", "title", "description", "date", "created_at", "user", "category",
+                   "category_name" , "amount", "tags", "is_favorite", "payment_method", "payment_method_name",
+                   "notes_count"]
         extra_kwargs={
             'user': {"read_only": True},
-            "is_favorite" : {"read_only": True}
+            "is_favorite" : {"read_only": True},
         }
+
+    def get_notes_count(self, obj):
+        # obj.notes is a related manager, not a list: count() runs SELECT COUNT(*).
+        return obj.notes.count()
 
     def validate_category(self, category):
         request = self.context.get("request")
@@ -229,3 +236,10 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         model = PaymentMethod
         fields = ["payment_method_id", "name", "user", "is_default", "created_at"]
         read_only_fields = [ "user", "created_at"]
+
+class AddExpenseNoteSerializer(serializers.ModelSerializer):
+    note_id = serializers.UUIDField(read_only=True)
+    content = serializers.CharField(max_length=1000)
+    class Meta:
+        model = ExpenseNote
+        fields = ["note_id", "content"]

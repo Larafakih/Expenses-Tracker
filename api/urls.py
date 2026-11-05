@@ -6,6 +6,7 @@ urlpatterns = [
     path('users/', views.UserCreate.as_view()),
     path('reports/monthly/', views.MonthlyReportView.as_view()),
     path('contributions/<uuid:pk>/', views.ContributionDetailAPIView.as_view()),
+    path('expense-notes/<uuid:pk>/', views.ExpenseNoteDetailAPIView.as_view()),
 
     ]
 

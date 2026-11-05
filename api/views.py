@@ -9,8 +9,9 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter, GoalFilter
-from api.models import Category, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
+from api.models import Category, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
+    AddExpenseNoteSerializer,
     CategorySerializer,
     CreateUserSerializer,
     ExpenseSerializer,
@@ -180,8 +181,36 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             
         return response
 
+    @action(detail=True, methods=['post'], url_path='notes')
+    def add_note (self, request, pk):
+        qr = Expense.objects.filter(is_deleted=False)
+        if not request.user.is_staff:
+            qr = qr.filter(user=request.user)
+        expense = get_object_or_404(qr, pk=pk)
+        input_serializer = AddExpenseNoteSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
 
+        note_content = input_serializer.validated_data["content"]
 
+        note = ExpenseNote.objects.create(
+            content=note_content,
+            expense=expense
+        )
+
+        return Response(
+            AddExpenseNoteSerializer(note).data,
+            status=status.HTTP_201_CREATED
+        )
+    
+    @add_note.mapping.get
+    def list_expense_notes(self, request, pk=None):
+        qr = Expense.objects.filter(is_deleted=False)
+        if not request.user.is_staff:
+            qr = qr.filter(user=request.user)
+        expense = get_object_or_404(qr, pk=pk)
+        notes = expense.notes.all()
+        serializer = AddExpenseNoteSerializer(notes, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)  
 
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
@@ -426,8 +455,16 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(pm)
         return Response(serializer.data)
 
-
-
+class ExpenseNoteDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = AddExpenseNoteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = ExpenseNote.objects.all()
+    lookup_field = 'pk'  # Default lookup field
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_staff:
+            qs= qs.filter(expense__user= self.request.user)
+        return qs
 
         
 
