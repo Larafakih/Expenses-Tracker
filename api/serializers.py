@@ -4,7 +4,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
+from api.models import Category, Expense, ExpenseHistory, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -243,3 +243,9 @@ class AddExpenseNoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseNote
         fields = ["note_id", "content"]
+
+class ExpenseHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExpenseHistory
+        fields = ["history_id", "expense","action", "old_amount", "new_amount", "created_at" ]
+        read_only_fields =["history_id", "expense", "created_at"]

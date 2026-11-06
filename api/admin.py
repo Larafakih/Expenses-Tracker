@@ -2,10 +2,10 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from api.models import Budget, Category, Expense, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
+from api.models import Budget, Category, Expense, ExpenseHistory, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 
 # Register your models here.
-
+# admin.site.register(ExpenseHistory)
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     # Extending Django's UserAdmin keeps the proper password-change form,
@@ -277,6 +277,29 @@ class TagAdmin(admin.ModelAdmin):
     search_fields = [
         "user__username",
         "name"
+    ]
+
+    list_per_page = 20
+
+@admin.register(ExpenseHistory)
+class ExpenseHistoryAdmin(admin.ModelAdmin):
+    list_display = [
+        "history_id",
+        "expense",
+        "action",
+        "created_at",
+        "old_amount",
+        "new_amount"
+    ]
+
+    list_filter = [
+        "history_id",
+        "created_at"
+    ]
+
+    search_fields = [
+        "expense__title",
+        "history_id"
     ]
 
     list_per_page = 20
