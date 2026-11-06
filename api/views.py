@@ -234,6 +234,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.for_user(self.request.user)
         expense = get_object_or_404(qs, pk=pk)
         notes = expense.notes.all()
+        print(f"test")
         serializer = AddExpenseNoteSerializer(notes, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)  
 
