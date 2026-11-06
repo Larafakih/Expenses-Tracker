@@ -32,4 +32,7 @@ class ExpenseRequestLoggingMiddleware:
                 duration,
             )
 
+        # 4. Add a custom header to the response
+        response["X-Response-Time"] = f"{duration:.2f}ms"
+
         return response
