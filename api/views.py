@@ -9,11 +9,12 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
 from api.filters import ExpenseFilter, GoalFilter
-from api.models import Category, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
+from api.models import Category, ExpenseHistory, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     AddExpenseNoteSerializer,
     CategorySerializer,
     CreateUserSerializer,
+    ExpenseHistorySerializer,
     ExpenseSerializer,
     ExpenseStatisticsSerializer,
     BudgetSerializer,
@@ -78,12 +79,36 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        with transaction.atomic():
+            expense = serializer.save(user=self.request.user)
+            ExpenseHistory.objects.create(
+                expense = expense,
+                action = ExpenseHistory.HistoryChoices.CREATED,
+                new_amount = expense.amount
+            )
 
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old_amount = serializer.instance.amount   # captured before save
+            expense = serializer.save()
+            if old_amount != expense.amount:
+                ExpenseHistory.objects.create(
+                                        expense = expense,
+                                        action = ExpenseHistory.HistoryChoices.UPDATED,
+                                        new_amount = expense.amount,
+                                        old_amount = old_amount
+                                    )            
+        
     def perform_destroy(self, instance):
-        instance.is_deleted = True
-        instance.save(update_fields=['is_deleted'])
-
+        with transaction.atomic():
+            instance.is_deleted = True
+            instance.save(update_fields=['is_deleted'])
+            ExpenseHistory.objects.create(
+                                                expense = instance,
+                                                action = ExpenseHistory.HistoryChoices.DELETED,
+                                                old_amount = instance.amount
+                                            )  
+            
     @action(detail=True, methods=['post'], url_path='favorite')
     def set_as_favorite(self, request, pk):
         qs = Expense.objects.active()
@@ -210,6 +235,16 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         expense = get_object_or_404(qs, pk=pk)
         notes = expense.notes.all()
         serializer = AddExpenseNoteSerializer(notes, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)  
+
+    @action(detail=True, methods=['get'], url_path='history')
+    def list_expense_history(self, request, pk):
+        qs = Expense.objects.all()
+        if not request.user.is_staff:
+            qs = qs.for_user(self.request.user)
+        expense = get_object_or_404(qs, pk=pk)
+        history = expense.history.all()
+        serializer = ExpenseHistorySerializer(history, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)  
 
 class BudgetViewSet(viewsets.ModelViewSet):

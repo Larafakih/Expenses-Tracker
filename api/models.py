@@ -326,3 +326,49 @@ class SavingContribution(models.Model):
     def __str__(self):
         return f"{self.amount} towards {self.goal.title} on {self.date}"
 
+class ExpenseHistory(models.Model):
+    class HistoryChoices(models.TextChoices):
+        CREATED = "created", "Created"
+        UPDATED = "updated", "Updated"
+        DELETED = "deleted", "Deleted"
+
+    history_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    expense = models.ForeignKey(Expense, on_delete=models.CASCADE, related_name="history")
+    action = models.CharField(
+        max_length=10,
+        choices=HistoryChoices.choices,
+        default=HistoryChoices.CREATED,
+    )
+    # Nullable: a "created" record has no old amount, a "deleted" record has no new amount.
+    old_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        null=True,
+        blank=True,
+    )
+    new_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "expense histories"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(old_amount__isnull=True) | models.Q(old_amount__gt=0),
+                name="expense_history_old_amount_gt_zero",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(new_amount__isnull=True) | models.Q(new_amount__gt=0),
+                name="expense_history_new_amount_gt_zero",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_action_display()} - {self.expense_id} at {self.created_at}"
