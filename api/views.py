@@ -72,9 +72,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['amount', 'date']
 
     def get_queryset(self):
-        qs = super().get_queryset().filter(is_deleted=False)
+        qs = Expense.objects.active()
         if not self.request.user.is_staff:
-            qs= qs.filter(user= self.request.user)
+            qs = qs.for_user(self.request.user)
         return qs
 
     def perform_create(self, serializer):
@@ -86,9 +86,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='favorite')
     def set_as_favorite(self, request, pk):
-        qs = Expense.objects
+        qs = Expense.objects.active()
         if not request.user.is_staff:
-            qs = qs.filter(user=request.user, is_deleted= False)
+            qs = qs.for_user(self.request.user)
         expense = get_object_or_404(qs, pk=pk)
         expense.is_favorite = True
         expense.save(update_fields=['is_favorite'])
@@ -97,9 +97,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='unfavorite')
     def unfavorite(self, request, pk):
-        qs = Expense.objects
+        qs = Expense.objects.active()
         if not request.user.is_staff:
-            qs = qs.filter(user=request.user, is_deleted= False)
+            qs = qs.for_user(self.request.user)
         expense = get_object_or_404(qs, pk=pk)
         expense.is_favorite = False
         expense.save(update_fields=['is_favorite'])
@@ -108,9 +108,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='favorites')
     def list_favorites(self, request):
-        favorite_expenses = Expense.objects.filter(is_favorite=True)
+        favorite_expenses = Expense.objects.active().filter(is_favorite=True)
         if not request.user.is_staff:
-            favorite_expenses = favorite_expenses.filter(user=request.user, is_deleted=False)
+            favorite_expenses = favorite_expenses.for_user(self.request.user)
         serializer = self.get_serializer(favorite_expenses, many=True)
         return Response(serializer.data)
 
@@ -142,17 +142,17 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='trash')
     def get_soft_deleted_expenses(self, request):
-        expenses = Expense.objects.filter(is_deleted=True)
+        qs = Expense.objects.deleted()
         if not request.user.is_staff:
-            expenses = expenses.filter(user=request.user)
-        serializer = self.get_serializer(expenses, many=True)
+            qs = qs.for_user(self.request.user)
+        serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='restore')
     def restore_expense (self, request, pk):
-        qs = Expense.objects.filter(is_deleted=True)
+        qs = Expense.objects.deleted()
         if not request.user.is_staff:
-            qs = qs.filter(user=request.user)
+            qs = qs.for_user(self.request.user)
         expense = get_object_or_404(qs, pk=pk)
         expense.is_deleted = False
         expense.save(update_fields=['is_deleted'])
@@ -162,7 +162,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='export')
     def export_expenses (self, request):
         # 1. Fetch and serialize data
-        expenses = self.filter_queryset(Expense.objects.filter(user=request.user, is_deleted=False))
+        expenses = self.filter_queryset(Expense.objects.active().for_user(self.request.user))
         serializer = ExpenseSerializer(expenses, many=True)
 
         # 2. Create the HttpResponse object with CSV headers
@@ -183,10 +183,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='notes')
     def add_note (self, request, pk):
-        qr = Expense.objects.filter(is_deleted=False)
+        qs = Expense.objects.active()
         if not request.user.is_staff:
-            qr = qr.filter(user=request.user)
-        expense = get_object_or_404(qr, pk=pk)
+            qs = qs.for_user(self.request.user)
+        expense = get_object_or_404(qs, pk=pk)
         input_serializer = AddExpenseNoteSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
 
@@ -204,10 +204,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     
     @add_note.mapping.get
     def list_expense_notes(self, request, pk=None):
-        qr = Expense.objects.filter(is_deleted=False)
+        qs = Expense.objects.active()
         if not request.user.is_staff:
-            qr = qr.filter(user=request.user)
-        expense = get_object_or_404(qr, pk=pk)
+            qs = qs.for_user(self.request.user)
+        expense = get_object_or_404(qs, pk=pk)
         notes = expense.notes.all()
         serializer = AddExpenseNoteSerializer(notes, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)  
