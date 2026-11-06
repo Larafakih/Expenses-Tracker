@@ -10,6 +10,8 @@ from django.db.models.functions import Coalesce, Length, Lower, Trim
 from django.db.models.lookups import GreaterThan, LessThanOrEqual
 from django.utils import timezone
 
+from api.managers import ExpenseQuerySet
+
 
 class User(AbstractUser):
     pass
@@ -182,6 +184,7 @@ class Expense(models.Model):
         blank=True,
         related_name="expenses",
     )
+    objects = ExpenseQuerySet.as_manager()
 
     class Meta:
         constraints = [
