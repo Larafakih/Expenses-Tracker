@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.db.models import DecimalField, F, Sum, Value
 from django.db.models.functions import Coalesce
 
-from api.models import Expense, Goal
+from api.models import Expense, Goal, Income
 
 class UUIDInFilter(django_filters.BaseInFilter, django_filters.UUIDFilter):
     """Comma-separated list of UUIDs, e.g. ?tags=id1,id2"""
@@ -66,3 +66,14 @@ class GoalFilter(django_filters.FilterSet):
             )
 
         return queryset
+
+class IncomeFilter(django_filters.FilterSet):
+    amount_min = django_filters.NumberFilter(field_name="amount", lookup_expr="gte")
+    amount_max = django_filters.NumberFilter(field_name="amount", lookup_expr="lte")
+    start_date = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    end_date = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+    source = django_filters.UUIDFilter(field_name="source__source_id", lookup_expr="exact", )
+
+    class Meta:
+        model = Income
+        fields = []

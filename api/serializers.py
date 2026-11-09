@@ -4,7 +4,7 @@ from pyexpat import model
 from unicodedata import category
 from rest_framework import serializers
 from django.db import transaction
-from api.models import Category, Expense, ExpenseHistory, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
+from api.models import Category, Expense, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -249,3 +249,42 @@ class ExpenseHistorySerializer(serializers.ModelSerializer):
         model = ExpenseHistory
         fields = ["history_id", "expense","action", "old_amount", "new_amount", "created_at" ]
         read_only_fields =["history_id", "expense", "created_at"]
+
+class IncomeSourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomeSource
+        fields = ["source_id", "user", "name", "created_at"]
+        read_only_fields = ["source_id", "user", "created_at"]
+
+class IncomeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Income
+        fields = ["income_id", "user", "title", "amount", "source", "date", "description", "created_at"]
+        read_only_fields = ["income_id", "user", "created_at"]
+
+    def validate_source(self, source):
+        # Users cannot assign another user's income source to their income.
+        request = self.context.get("request")
+        if source and request and source.user != request.user:
+            raise serializers.ValidationError("This income source does not belong to you.")
+        return source
+
+class IncomeBySourceSerializer(serializers.Serializer):
+    source = serializers.CharField(allow_null=True)  # null = incomes with no source
+    total = serializers.DecimalField(max_digits=20, decimal_places=2)
+
+
+class IncomeStatisticsSerializer(serializers.Serializer):
+    month = serializers.IntegerField()
+    year = serializers.IntegerField()
+    total_income = serializers.DecimalField(max_digits=20, decimal_places=2)
+    income_count = serializers.IntegerField()
+    by_source = IncomeBySourceSerializer(many=True)
+
+class CashFlowSerializer(serializers.Serializer):
+    month = serializers.IntegerField()
+    year = serializers.IntegerField()
+    total_income = serializers.DecimalField(max_digits=20, decimal_places=2)
+    total_expenses = serializers.DecimalField(max_digits=20, decimal_places=2)
+    net_cash_flow = serializers.DecimalField(max_digits=20, decimal_places=2)
+    savings_rate = serializers.DecimalField(max_digits=20, decimal_places=1)
