@@ -7,7 +7,7 @@ urlpatterns = [
     path('reports/monthly/', views.MonthlyReportView.as_view()),
     path('contributions/<uuid:pk>/', views.ContributionDetailAPIView.as_view()),
     path('expense-notes/<uuid:pk>/', views.ExpenseNoteDetailAPIView.as_view()),
-
+    path('reports/cash-flow/', views.NetCashView.as_view()),
     ]
 
 router = DefaultRouter()
@@ -18,5 +18,7 @@ router.register('recurrent-expenses', views.RecurrentExpenseViewSet)
 router.register('tags', views.TagViewSet)
 router.register('saving-goals', views.GoalViewset)
 router.register('payment-methods', views.PaymentMethodViewSet)
+router.register('income-sources', views.IncomeSourceViewSet)
+router.register('incomes', views.IncomeViewSet)
 
 urlpatterns += router.urls

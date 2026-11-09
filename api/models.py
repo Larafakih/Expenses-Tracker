@@ -372,3 +372,71 @@ class ExpenseHistory(models.Model):
 
     def __str__(self):
         return f"{self.get_action_display()} - {self.expense_id} at {self.created_at}"
+
+class IncomeSource(models.Model):
+    source_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="income_sources")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(name=""),
+                name="income_source_name_not_empty",
+            ),
+            # A user cannot have two income sources with the same name (case-insensitive).
+            models.UniqueConstraint(
+                Lower("name"),
+                "user",
+                name="unique_income_source_name_per_user_ci",
+                violation_error_message="You already have an income source with this name.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Income(models.Model):
+    income_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="incomes")
+    title = models.CharField(max_length=200)
+    amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    # One source -> many incomes. SET_NULL requires null=True; deleting a source keeps its incomes.
+    source = models.ForeignKey(
+        IncomeSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="incomes",
+    )
+    # When the money was received.
+    date = models.DateTimeField()
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="income_amount_gt_zero",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(title=""),
+                name="income_title_not_empty",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        # Users cannot assign another user's income source to their income.
+        if self.source_id and self.user_id and self.source.user_id != self.user_id:
+            raise ValidationError({"source": "This income source does not belong to you."})
+
+    def __str__(self):
+        return f"{self.title} ({self.amount}) on {self.date}"

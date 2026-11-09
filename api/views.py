@@ -8,10 +8,11 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
-from api.filters import ExpenseFilter, GoalFilter
-from api.models import Category, ExpenseHistory, ExpenseNote, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
+from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
+from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     AddExpenseNoteSerializer,
+    CashFlowSerializer,
     CategorySerializer,
     CreateUserSerializer,
     ExpenseHistorySerializer,
@@ -20,6 +21,9 @@ from api.serializers import (
     BudgetSerializer,
     GenerateExpensesSerializer,
     GoalSerializer,
+    IncomeSerializer,
+    IncomeSourceSerializer,
+    IncomeStatisticsSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
     PaymentMethodSerializer,
@@ -502,6 +506,116 @@ class ExpenseNoteDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
             qs= qs.filter(expense__user= self.request.user)
         return qs
 
-        
+class IncomeSourceViewSet(viewsets.ModelViewSet):
+    serializer_class = IncomeSourceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = IncomeSource.objects.all()
+    def get_queryset(self):
+            qs = super().get_queryset()
+            if not self.request.user.is_staff:
+                qs= qs.filter(user= self.request.user)
+            return qs
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
+class IncomeViewSet(viewsets.ModelViewSet):
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = Income.objects.all()
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = IncomeFilter
+    search_fields = ['title', 'description', 'source__name']
+    ordering_fields = ['date', 'amount']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_staff:
+            qs = qs.filter(user=self.request.user)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['get'], url_path='statistics', serializer_class=IncomeStatisticsSerializer)
+    def get_income_statistics(self, request):
+        params = MonthlyReportQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        month = params.validated_data["month"]
+        year = params.validated_data["year"]
+
+        start = month_start(year, month)
+        end = month_start(year, month + 1)
+        incomes = (
+            self.filter_queryset(self.get_queryset())
+            .order_by()  # clear default ordering so it doesn't affect GROUP BY
+            .filter(date__gte=start, date__lt=end)
+        )
+
+        totals = incomes.aggregate(
+            total_income=Sum('amount', default=Decimal('0.00')),
+            income_count=Count('income_id'),
+        )
+        # Group by source id + name; incomes without a source form one row with source=None.
+        by_source = (
+            incomes
+            .values('source__source_id', 'source__name')
+            .annotate(total=Sum('amount'))
+            .order_by('-total')
+        )
+
+        serializer = self.get_serializer({
+            "month": month,
+            "year": year,
+            "total_income": totals["total_income"],
+            "income_count": totals["income_count"],
+            "by_source": [
+                {"source": row["source__name"], "total": row["total"]}
+                for row in by_source
+            ],
+        })
+        return Response(serializer.data)
+
+
+
+class CashFlowView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+
+
+
+class NetCashView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        params = MonthlyReportQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        month = params.validated_data["month"]
+        year = params.validated_data["year"]
+
+
+        start = month_start(year, month)
+        end = month_start(year, month + 1)
+        user_expenses = Expense.objects.filter(user=request.user, is_deleted=False)
+        expenses = user_expenses.filter(date__gte=start, date__lt=end)
+        income = Income.objects.filter(user=request.user, date__gte=start, date__lt=end)
+
+        expenses_total = expenses.aggregate(
+                    total_expense=Sum('amount'),
+                )
+        incomes_total = income.aggregate(
+                            total_income=Sum('amount'),
+                        )
+
+        net_cash_flow = incomes_total['total_income'] - expenses_total['total_expense']
+        savings_rate = net_cash_flow/incomes_total['total_income']  *100
+
+        serializer = CashFlowSerializer({
+            "month": month,
+            "year": year,
+            "total_income":incomes_total['total_income'],
+            "total_expenses": expenses_total['total_expense'],
+            "net_cash_flow": net_cash_flow,
+            "savings_rate" : savings_rate
+        })
+        return Response(serializer.data)
              
