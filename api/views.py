@@ -8,6 +8,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 from rest_framework import generics
+from rest_framework.parsers import FormParser, MultiPartParser
 from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
 from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
@@ -32,6 +33,7 @@ from api.serializers import (
     SavingContributionSerializer,
     TagSerializer,
     UserProfileSerializer,
+    ReceiptSerializer
 )
 from rest_framework import permissions, serializers, status
 from rest_framework import viewsets
@@ -260,6 +262,16 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         history = expense.history.all()
         serializer = ExpenseHistorySerializer(history, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)  
+
+    @action(detail=True, methods=['post'], url_path='receipts', serializer_class=ReceiptSerializer,  parser_classes=[MultiPartParser, FormParser])
+    def upload_receipt(self, request, pk=None):
+        expense = self.get_object()  # 404 if it isn't the user's
+        serializer = ReceiptSerializer(
+            data=request.data, context={"request": request, "expense": expense}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
