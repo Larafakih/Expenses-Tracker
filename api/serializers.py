@@ -1,10 +1,10 @@
-from dataclasses import field, fields
-from operator import concat
-from pyexpat import model
-from unicodedata import category
+import io
+
+from PIL import Image, ImageOps
 from rest_framework import serializers
+from django.core.files.base import ContentFile
 from django.db import transaction
-from api.models import Category, Expense, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Budget
+from api.models import MAX_RECEIPT_SIZE, Category, Expense, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, Receipt, ReceiptFileType, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
 
@@ -305,3 +305,116 @@ class CashFlowSerializer(serializers.Serializer):
     total_expenses = serializers.DecimalField(max_digits=20, decimal_places=2)
     net_cash_flow = serializers.DecimalField(max_digits=20, decimal_places=2)
     savings_rate = serializers.DecimalField(max_digits=20, decimal_places=1)
+
+MAX_RECEIPTS_PER_EXPENSE = 5
+THUMBNAIL_SIZE = (300, 300)
+
+# The first bytes of each allowed file type ("magic numbers").
+FILE_SIGNATURES = {
+    b"\xff\xd8\xff": ReceiptFileType.JPEG,
+    b"\x89PNG\r\n\x1a\n": ReceiptFileType.PNG,
+    b"%PDF-": ReceiptFileType.PDF,
+}
+
+
+def detect_content_type(file):
+    """Return the ReceiptFileType based on the file's content (not its name), or None."""
+    file.seek(0)
+    header = file.read(8)
+    file.seek(0)
+    for signature, content_type in FILE_SIGNATURES.items():
+        if header.startswith(signature):
+            return content_type
+    return None
+
+
+def make_thumbnail(file):
+    """A JPEG at most 300x300, keeping the aspect ratio and the photo's orientation."""
+    file.seek(0)
+    with Image.open(file) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail(THUMBNAIL_SIZE)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85)
+    file.seek(0)
+    return ContentFile(buffer.getvalue())
+
+
+class ReceiptSerializer(serializers.ModelSerializer):
+    # Upload only: the response describes the receipt instead of returning the raw file.
+    file = serializers.FileField(write_only=True)
+    has_thumbnail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Receipt
+        fields = [
+            "receipt_id",
+            "expense",
+            "file",
+            "original_name",
+            "content_type",
+            "size",
+            "has_thumbnail",
+            "uploaded_at",
+        ]
+        # Everything except "file" is set by the server, never by the client.
+        read_only_fields = [
+            "receipt_id",
+            "expense",
+            "original_name",
+            "content_type",
+            "size",
+            "uploaded_at",
+        ]
+
+    def get_has_thumbnail(self, obj):
+        return bool(obj.thumbnail)
+
+    def validate_file(self, file):
+        if file.size == 0:
+            raise serializers.ValidationError("The file is empty.")
+        if file.size > MAX_RECEIPT_SIZE:
+            raise serializers.ValidationError("The file must be 5 MB or smaller.")
+
+        content_type = detect_content_type(file)
+        if content_type is None:
+            raise serializers.ValidationError("Only JPEG, PNG and PDF files are allowed.")
+
+        if content_type != ReceiptFileType.PDF:
+            # The header looks like an image; make sure the whole file really is one.
+            try:
+                with Image.open(file) as image:
+                    image.verify()
+            except Exception:
+                raise serializers.ValidationError("The image file is corrupted or invalid.")
+            finally:
+                file.seek(0)
+
+        file.detected_content_type = content_type
+        return file
+
+    def validate(self, attrs):
+        # The view passes the expense in the context after checking it belongs to the user.
+        expense = self.context["expense"]
+        if expense.is_deleted:
+            raise serializers.ValidationError("You cannot add receipts to a deleted expense.")
+        if expense.receipts.count() >= MAX_RECEIPTS_PER_EXPENSE:
+            raise serializers.ValidationError(
+                f"An expense can have at most {MAX_RECEIPTS_PER_EXPENSE} receipts."
+            )
+        return attrs
+
+    def create(self, validated_data):
+        file = validated_data["file"]
+        receipt = Receipt(
+            expense=self.context["expense"],
+            file=file,
+            original_name=file.name[:255],
+            content_type=file.detected_content_type,
+            size=file.size,
+        )
+        if receipt.content_type != ReceiptFileType.PDF:
+            # save=False: the receipt itself is saved once, below.
+            receipt.thumbnail.save("thumbnail.jpg", make_thumbnail(file), save=False)
+        receipt.save()
+        return receipt

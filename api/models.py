@@ -440,3 +440,57 @@ class Income(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.amount}) on {self.date}"
+
+MAX_RECEIPT_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def receipt_upload_to(instance, filename):
+    # Random stored name (never the user's filename): receipts/<user_id>/<uuid>.<ext>
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return f"receipts/{instance.expense.user_id}/{uuid.uuid4()}.{ext}"
+
+
+def receipt_thumbnail_upload_to(instance, filename):
+    return f"receipts/{instance.expense.user_id}/thumbnails/{uuid.uuid4()}.jpg"
+
+
+class ReceiptFileType(models.TextChoices):
+    JPEG = "image/jpeg", "JPEG"
+    PNG = "image/png", "PNG"
+    PDF = "application/pdf", "PDF"
+
+
+class Receipt(models.Model):
+    FileChoices = ReceiptFileType  # so Receipt.FileChoices.PDF still works
+
+    receipt_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    expense = models.ForeignKey(Expense, on_delete=models.CASCADE, related_name="receipts")
+    file = models.FileField(upload_to=receipt_upload_to)
+    # The name the user uploaded, e.g. "carrefour_nov.jpg" (shown back to them, not used on disk).
+    original_name = models.CharField(max_length=255)
+    # Detected from the file content when uploading, so there is no default.
+    content_type = models.CharField(max_length=50, choices=FileChoices.choices)
+    size = models.PositiveIntegerField(help_text="File size in bytes.")
+    # Only images get a thumbnail; PDFs leave it empty.
+    thumbnail = models.ImageField(upload_to=receipt_thumbnail_upload_to, null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(size__gt=0, size__lte=MAX_RECEIPT_SIZE),
+                name="receipt_size_between_1_byte_and_5mb",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(content_type__in=ReceiptFileType.values),
+                name="receipt_content_type_allowed",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(original_name=""),
+                name="receipt_original_name_not_empty",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.original_name} ({self.expense_id})"
