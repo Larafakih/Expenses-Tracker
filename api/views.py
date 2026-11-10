@@ -31,6 +31,7 @@ from api.serializers import (
     RecurrentExpenseSerializer,
     SavingContributionSerializer,
     TagSerializer,
+    UserProfileSerializer,
 )
 from rest_framework import permissions, serializers, status
 from rest_framework import viewsets
@@ -51,6 +52,14 @@ class UserCreate(generics.CreateAPIView):
     serializer_class = CreateUserSerializer
     permission_classes = [permissions.AllowAny]
 
+class UserDetails(generics.RetrieveUpdateAPIView):
+    """Retrieve or update the profile of the currently authenticated user."""
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+    
 class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     queryset = Category.objects.all()
