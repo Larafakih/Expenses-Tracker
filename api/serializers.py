@@ -2,6 +2,8 @@ import io
 
 from PIL import Image, ImageOps
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
 from api.models import MAX_RECEIPT_SIZE, Category, Expense, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, Receipt, ReceiptFileType, RecurrentExpense, SavingContribution, Tag, User, Budget
@@ -21,21 +23,20 @@ class CreateUserSerializer(serializers.ModelSerializer):
             return user
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False, min_length=8)
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name", "date_joined", "password"]
+        fields = ["id", "username", "email", "first_name", "last_name", "date_joined"]
         read_only_fields = ["id", "date_joined"]
 
-    def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
+    # def update(self, instance, validated_data):
+    #     password = validated_data.pop("password", None)
+    #     for attr, value in validated_data.items():
+    #         setattr(instance, attr, value)
+    #     if password:
+    #         instance.set_password(password)
+    #     instance.save()
+    #     return instance
 
 class CategorySerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source='user.email', read_only=True)
@@ -420,3 +421,41 @@ class ReceiptSerializer(serializers.ModelSerializer):
             receipt.thumbnail.save("thumbnail.jpg", make_thumbnail(file), save=False)
         receipt.save()
         return receipt
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_old_password(self, old_password):
+        # The view must pass the request in the context (get_serializer() does it).
+        user = self.context["request"].user
+        if not user.check_password(old_password):
+            raise serializers.ValidationError("Wrong password.")
+        return old_password
+
+    def validate(self, attrs):
+        # Object-level validation: runs after the field validators,
+        # so it can compare several fields together.
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        if attrs["new_password"] == attrs["old_password"]:
+            raise serializers.ValidationError({"new_password": "New password must be different from the old one."})
+
+        # Run Django's AUTH_PASSWORD_VALIDATORS (too short, too common, all digits...).
+        # They raise Django's ValidationError, which DRF doesn't understand,
+        # so convert it into a DRF one.
+        user = self.context["request"].user
+        try:
+            validate_password(attrs["new_password"], user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        # set_password() hashes the password; never assign user.password directly.
+        user.set_password(self.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return user
+
