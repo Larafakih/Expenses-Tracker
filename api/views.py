@@ -15,6 +15,7 @@ from api.serializers import (
     AddExpenseNoteSerializer,
     CashFlowSerializer,
     CategorySerializer,
+    ChangePasswordSerializer,
     CreateUserSerializer,
     ExpenseHistorySerializer,
     ExpenseSerializer,
@@ -700,13 +701,8 @@ class IncomeViewSet(viewsets.ModelViewSet):
         })
         return Response(serializer.data)
 
-
-
 class CashFlowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-
-
 
 class NetCashView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -743,4 +739,13 @@ class NetCashView(APIView):
             "savings_rate" : savings_rate
         })
         return Response(serializer.data)
-             
+
+class ChangePasswordView(generics.GenericAPIView):
+    serializer_class = ChangePasswordSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
