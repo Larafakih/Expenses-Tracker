@@ -3,7 +3,7 @@ import csv
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, F, Sum
+from django.db.models import Count, F, Sum, Q
 from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
@@ -72,7 +72,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
         # qs = Category.objects.select_related("user")
         if not self.request.user.is_staff:
             qs= qs.filter(user= self.request.user)
-        return qs
+        return qs.annotate(expense_count=Count('expense__expense_id',filter=Q(expense__is_deleted=False)), total_spent=Sum('expense__amount',filter=Q(expense__is_deleted=False), default=0))
 
 
     def perform_create(self, serializer):

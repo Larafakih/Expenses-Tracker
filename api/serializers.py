@@ -39,9 +39,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class CategorySerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source='user.email', read_only=True)
+    total_spent = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    expense_count = serializers.IntegerField( read_only=True)
     class Meta:
         model = Category
-        fields = ["category_id","name", "created_at", "description", "user_email"]
+        fields = ["category_id","name", "created_at", "description", "user_email", "total_spent", "expense_count"]
     
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
@@ -99,7 +101,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
 class CategoryExpenseSerializer(serializers.Serializer):
     category = serializers.CharField()
     total = serializers.DecimalField(max_digits=20, decimal_places=2)
-
+    
 
 class ExpenseStatisticsSerializer(serializers.Serializer):
     total_expenses = serializers.IntegerField()
