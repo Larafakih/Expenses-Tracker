@@ -78,6 +78,45 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    def perform_destroy(self, instance):
+        # Expense.category uses on_delete=CASCADE, so deleting the category would
+        # hard-delete its expenses. Count them all, including soft-deleted ones
+        # (the ones in the trash would be destroyed too).
+        expense_count = Expense.objects.filter(category=instance).count()
+        move_to = self.request.query_params.get("move_to")
+
+        if expense_count == 0:
+            instance.delete()
+            return
+
+        if not move_to:
+            # Raising (not returning) is what stops the delete:
+            # DRF turns ValidationError into a 400 response.
+            raise serializers.ValidationError({
+                "detail": f"This category has {expense_count} expenses. "
+                          "Move them first with ?move_to=<category_id>."
+            })
+
+        # Parse the UUID first: an invalid string in filter(pk=...) would crash with a 500.
+        try:
+            target_id = serializers.UUIDField().run_validation(move_to)
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"move_to": exc.detail})
+        # The target must belong to the same user as the category being deleted.
+        target = Category.objects.filter(pk=target_id, user=instance.user).first()
+        if target is None:
+            raise serializers.ValidationError({"move_to": "Category not found."})
+        if target.pk == instance.pk:
+            raise serializers.ValidationError({"move_to": "Cannot move expenses to the same category."})
+
+        with transaction.atomic():
+            # update() moves all rows in one SQL query.
+            Expense.objects.filter(category=instance).update(category=target)
+            RecurrentExpense.objects.filter(category=instance).update(category=target)
+            # Budgets are deleted with the category (CASCADE): moving them could
+            # break the "one budget per category per month" unique constraint.
+            instance.delete()
+
 class ExpenseViewSet(viewsets.ModelViewSet):
     serializer_class = ExpenseSerializer
     queryset = Expense.objects.all()
