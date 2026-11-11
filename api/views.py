@@ -273,6 +273,32 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk_expenses_create(self, request):
+        serializer = self.get_serializer(
+            data=request.data,
+            many=True,
+            allow_empty=False,   # reject []
+            max_length=100,      # reject huge payloads
+        )
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            expenses = serializer.save(user=request.user)   # a list of Expense objects
+            ExpenseHistory.objects.bulk_create([
+                ExpenseHistory(
+                    expense=expense,
+                    action=ExpenseHistory.HistoryChoices.CREATED,
+                    new_amount=expense.amount,
+                )
+                for expense in expenses
+            ])
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+
+
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
     queryset = Budget.objects.all()
