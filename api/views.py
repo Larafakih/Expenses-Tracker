@@ -296,8 +296,47 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], url_path='duplicate')
+    def duplicate_expense(self, request, pk=None):
+        # get_object() uses get_queryset(), so it returns 404 for another
+        # user's expense or a soft-deleted one.
+        expense = self.get_object()
 
+        # Optional "date" in the body; otherwise use the current time.
+        # DateTimeField().to_internal_value() parses the string and raises
+        # a ValidationError (400) if it is not a valid datetime.
+        new_date = timezone.now()
+        if "date" in request.data:
+            try:
+                new_date = serializers.DateTimeField().to_internal_value(request.data["date"])
+            except serializers.ValidationError as exc:
+                # Re-raise under the "date" key: {"date": ["..."]}
+                raise serializers.ValidationError({"date": exc.detail})
 
+        with transaction.atomic():
+            new_expense = Expense.objects.create(
+                user=request.user,
+                title=expense.title,
+                description=expense.description,
+                category=expense.category,
+                amount=expense.amount,
+                payment_method=expense.payment_method,
+                date=new_date,
+                # Not copied on purpose: is_favorite (default False) and
+                # recurrent_expense (the copy is a normal expense).
+            )
+            # Many-to-many fields can't be passed to create(): the row must
+            # exist first, then the links are added.
+            new_expense.tags.set(expense.tags.all())
+
+            ExpenseHistory.objects.create(
+                expense=new_expense,
+                action=ExpenseHistory.HistoryChoices.CREATED,
+                new_amount=new_expense.amount,
+            )
+
+        serializer = self.get_serializer(new_expense)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
