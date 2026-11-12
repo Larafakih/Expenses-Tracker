@@ -34,6 +34,8 @@ from api.serializers import (
     RecurrentExpenseSerializer,
     SavingContributionSerializer,
     TagSerializer,
+    UpcomingQuerySerializer,
+    UpcomingRecurrentExpensesSerializer,
     UserProfileSerializer,
     ReceiptSerializer
 )
@@ -437,6 +439,53 @@ class RecurrentExpenseViewSet(viewsets.ModelViewSet):
 
         Expense.objects.bulk_create(to_create)
         return Response({"created": len(to_create)}, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['get'], url_path='upcoming')
+    def list_upcoming_expenses(self, request):
+        params = UpcomingQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        days = params.validated_data["days"]
+
+        # localdate(): today in the project's timezone (now().date() would be UTC).
+        start_date = timezone.localdate()
+        end_date = start_date + timedelta(days=days)
+
+        # Upcoming payments mostly don't exist as Expense rows yet, so compute
+        # them from the active templates. select_related("category") loads the
+        # category in the same query (no extra query per template).
+        templates = RecurrentExpense.objects.filter(
+            user=request.user, is_active=True
+        ).select_related("category")
+
+        payments = []
+        for template in templates:
+            for day in scheduled_dates(template, end_date):
+                if day < start_date:
+                    continue  # past occurrences of old templates
+                payments.append({
+                    "recurrent_expense_id": template.pk,
+                    "date": day,
+                    "title": template.title,
+                    "amount": template.amount,
+                    "category_name": template.category.name,
+                    "frequency": template.frequency,
+                })
+
+        payments.sort(key=lambda payment: payment["date"])
+        # Start the sum at Decimal("0.00") so an empty list gives 0.00, not 0.
+        total = sum((payment["amount"] for payment in payments), Decimal("0.00"))
+
+        serializer = UpcomingRecurrentExpensesSerializer({
+            "days": days,
+            "total": total,
+            "payments": payments,  # plain dicts; the nested serializer formats them
+        })
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+
+
 
 
 class MonthlyReportView(APIView):

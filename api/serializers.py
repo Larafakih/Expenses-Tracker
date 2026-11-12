@@ -484,3 +484,22 @@ class LogoutSerializer(serializers.Serializer):
 
     def save(self, **kwargs):
         self.validated_data["refresh"].blacklist()
+
+class UpcomingPaymentSerializer(serializers.Serializer):
+    """One future payment produced by a recurring expense (a plain dict, not a model)."""
+    recurrent_expense_id = serializers.UUIDField()
+    date = serializers.DateField()
+    title = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=20, decimal_places=2)
+    category_name = serializers.CharField()
+    frequency = serializers.CharField()
+
+
+class UpcomingRecurrentExpensesSerializer(serializers.Serializer):
+    days = serializers.IntegerField()
+    total = serializers.DecimalField(max_digits=20, decimal_places=2)
+    # many=True: payments is a list of payment dicts.
+    payments = UpcomingPaymentSerializer(many=True)
+
+class UpcomingQuerySerializer(serializers.Serializer):
+    days = serializers.IntegerField(min_value=1, max_value=365, default=30)
