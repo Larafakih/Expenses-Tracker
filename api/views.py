@@ -45,9 +45,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
-
-
-
+from rest_framework.pagination import PageNumberPagination, LimitOffsetPagination
 
 
 # Create your views here.
@@ -127,6 +125,11 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     filterset_class = ExpenseFilter
     search_fields = ['title']
     ordering_fields = ['amount', 'date']
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
+    pagination_class.page_size_query_param = 'pagenum'
+    pagination_class.page_size_query_param = "size"
+    pagination_class.max_page_size= 1000
 
     def get_queryset(self):
         qs = Expense.objects.active()
