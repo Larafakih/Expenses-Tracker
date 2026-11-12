@@ -9,6 +9,9 @@ from django.db import transaction
 from api.models import MAX_RECEIPT_SIZE, Category, Expense, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, Receipt, ReceiptFileType, RecurrentExpense, SavingContribution, Tag, User, Budget
 from decimal import Decimal
 from django.db.models import Sum
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+
 
 
 class CreateUserSerializer(serializers.ModelSerializer):
@@ -459,3 +462,25 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.save(update_fields=["password"])
         return user
 
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField(write_only=True)
+
+    def validate_refresh(self, refresh):
+        # RefreshToken() raises TokenError if the token is invalid,
+        # expired or already blacklisted. It never returns something "falsy".
+        try:
+            token = RefreshToken(refresh)
+        except TokenError:
+            raise serializers.ValidationError("Token is invalid, expired or already blacklisted.")
+
+        # Only allow logging out your own token.
+        user = self.context["request"].user
+        if str(token.get("user_id")) != str(user.pk):
+            raise serializers.ValidationError("This token does not belong to you.")
+
+        # Whatever validate_<field> returns goes into validated_data,
+        # so the view's save() gets the token object, not the string.
+        return token
+
+    def save(self, **kwargs):
+        self.validated_data["refresh"].blacklist()

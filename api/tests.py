@@ -223,3 +223,36 @@ class ContributionsTest(APITestCase):
                                                 })  
         contributions_list = self.client.get(f"/saving-goals/{created_goal1.data["goal_id"]}/contributions/")
         self.assertEqual(len(contributions_list.data), 1)
+
+class LogoutTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        login = self.client.post(
+            "/api/token/",
+            {"username": "lara", "password": "pass12345"},
+            format="json",
+        )
+        self.access = login.data["access"]
+        self.refresh = login.data["refresh"]
+
+    def test_logout_blacklists_refresh_token(self):
+        response = self.client.post(
+            "/api/token/logout/",
+            {"refresh": self.refresh},
+            format="json",
+            headers={"Authorization": f"Bearer {self.access}"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_205_RESET_CONTENT)
+
+        # The refresh token must not work any more.
+        response = self.client.post("/api/token/refresh/", {"refresh": self.refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_logout_without_access_token_is_rejected(self):
+        response = self.client.post("/api/token/logout/", {"refresh": self.refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+      
+
+
+
+ 

@@ -26,6 +26,7 @@ from api.serializers import (
     IncomeSerializer,
     IncomeSourceSerializer,
     IncomeStatisticsSerializer,
+    LogoutSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
     PaymentMethodSerializer,
@@ -749,3 +750,13 @@ class ChangePasswordView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+class LogoutView(generics.GenericAPIView):
+    serializer_class = LogoutSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(status=status.HTTP_205_RESET_CONTENT)
