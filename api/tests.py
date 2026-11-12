@@ -85,10 +85,10 @@ class UserExpensesPrivacy(APITestCase):
 
     def test_user_can_see_only_his_expenses(self):
         response = self.client.get("/expenses/")
-        expenses = response.data
+        expenses = response.data["results"]
 
         # Guard: an empty list would make the loop below pass without checking anything.
-        self.assertEqual(len(expenses), 1)
+        self.assertEqual(len(response.data["results"]), 1)
         for exp in expenses:
             self.assertEqual(exp["user"], self.user1.id)
 
@@ -136,7 +136,7 @@ class GenerateRecurrentExpenses(APITestCase):
 
         # And the database holds exactly 5, not 10.
         response3 = self.client.get("/expenses/")
-        self.assertEqual(len(response3.data), 5)
+        self.assertEqual(len(response3.data["results"]), 5)
 
 class TagOwnershipValidationTest(APITestCase):
     def setUp(self):
@@ -251,6 +251,45 @@ class LogoutTests(APITestCase):
     def test_logout_without_access_token_is_rejected(self):
         response = self.client.post("/api/token/logout/", {"refresh": self.refresh}, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+class ChangePasswordTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        # login = self.client.post(
+        #     "/api/token/",
+        #     {"username": "lara", "password": "pass12345"},
+        #     format="json",
+        # )
+        # self.access = login.data["access"]
+        # self.refresh = login.data["refresh"]
+        self.client.force_authenticate(user=self.user)
+
+
+    def test_new_password_works(self):
+        change_pass_response = self.client.post(
+                "/users/me/change-password/",
+                {"old_password": "pass12345", "new_password": "pass123456", "confirm_password": "pass123456"},
+                format="json",
+            )
+        self.assertEqual(change_pass_response.status_code, status.HTTP_204_NO_CONTENT)
+
+        login_new_pass = self.client.post(
+                    "/api/token/",
+                    {"username": "lara", "password": "pass123456"},
+                    format="json",
+                )
+        self.assertEqual(login_new_pass.status_code, status.HTTP_200_OK)
+
+        login_old_pass = self.client.post(
+                            "/api/token/",
+                            {"username": "lara", "password": "pass12345"},
+                            format="json",
+                        )
+        # Wrong credentials on login -> 401 (authentication failed), not 400.
+        self.assertEqual(login_old_pass.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        
+
       
 
 
