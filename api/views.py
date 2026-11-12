@@ -127,15 +127,15 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['amount', 'date']
     pagination_class = PageNumberPagination
     pagination_class.page_size = 10
-    pagination_class.page_size_query_param = 'pagenum'
+    pagination_class.page_query_param = 'pagenum'
     pagination_class.page_size_query_param = "size"
-    pagination_class.max_page_size= 1000
+    pagination_class.max_page_size= 100
 
     def get_queryset(self):
         qs = Expense.objects.active()
         if not self.request.user.is_staff:
             qs = qs.for_user(self.request.user)
-        return qs
+        return qs.order_by("-date")
 
     def perform_create(self, serializer):
         with transaction.atomic():
