@@ -445,6 +445,9 @@ class RecurrentExpenseViewSet(viewsets.ModelViewSet):
         params = UpcomingQuerySerializer(data=request.query_params)
         params.is_valid(raise_exception=True)
         days = params.validated_data["days"]
+        # .get(): "category" is optional (required=False), so the key is
+        # missing from validated_data when ?category= isn't sent.
+        category = params.validated_data.get("category")
 
         # localdate(): today in the project's timezone (now().date() would be UTC).
         start_date = timezone.localdate()
@@ -456,6 +459,9 @@ class RecurrentExpenseViewSet(viewsets.ModelViewSet):
         templates = RecurrentExpense.objects.filter(
             user=request.user, is_active=True
         ).select_related("category")
+
+        if category is not None:
+            templates = templates.filter(category_id=category)
 
         payments = []
         for template in templates:
