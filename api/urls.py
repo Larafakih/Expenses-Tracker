@@ -10,6 +10,7 @@ urlpatterns = [
     path('contributions/<uuid:pk>/', views.ContributionDetailAPIView.as_view()),
     path('expense-notes/<uuid:pk>/', views.ExpenseNoteDetailAPIView.as_view()),
     path('reports/cash-flow/', views.NetCashView.as_view()),
+    path('assistant/ask/', views.AssistantAskView.as_view() ) 
     ]
 
 router = DefaultRouter()
