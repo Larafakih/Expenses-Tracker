@@ -7,12 +7,16 @@ from django.db.models import Count, F, Sum, Q
 from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
+import requests
 from rest_framework import generics
 from rest_framework.parsers import FormParser, MultiPartParser
+from api.ai import SYSTEM_PROMPT, ask_ai, build_summary
+from api.utils import month_start
 from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
 from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
     AddExpenseNoteSerializer,
+    AskQuestionSerializer,
     CashFlowSerializer,
     CategorySerializer,
     ChangePasswordSerializer,
@@ -48,6 +52,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
 from rest_framework.pagination import PageNumberPagination, LimitOffsetPagination
+from rest_framework.throttling import ScopedRateThrottle
 
 
 # Create your views here.
@@ -535,12 +540,6 @@ class MonthlyReportView(APIView):
         return Response(serializer.data)
 
 
-def month_start(year, month):
-    """Aware datetime at midnight on the 1st; month may overflow past 1..12 (e.g. 13 -> next January)."""
-    month_index = month - 1
-    return timezone.make_aware(datetime(year + month_index // 12, month_index % 12 + 1, 1))
-
-
 def percentage(part, whole):
     if not whole:
         return None
@@ -818,3 +817,21 @@ class LogoutView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(status=status.HTTP_205_RESET_CONTENT)
+
+class AssistantAskView(generics.GenericAPIView):
+    serializer_class = AskQuestionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "assistant"
+    
+    def post(self, request):
+        summary = build_summary(request.user)
+        input_serializer = AskQuestionSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        question = input_serializer.validated_data["question"]
+        try:
+            answer = ask_ai(SYSTEM_PROMPT.format(summary=summary), question)
+            return Response({"answer": answer})
+        except requests.RequestException:
+            return Response({"detail": "Assistant is unavailable, try again later."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)

@@ -504,3 +504,6 @@ class UpcomingRecurrentExpensesSerializer(serializers.Serializer):
 class UpcomingQuerySerializer(serializers.Serializer):
     days = serializers.IntegerField(min_value=1, max_value=365, default=30)
     category = serializers.UUIDField(required=False)
+
+class AskQuestionSerializer(serializers.Serializer):
+    question = serializers.CharField(max_length=500)
