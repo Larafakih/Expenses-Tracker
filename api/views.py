@@ -7,10 +7,12 @@ from django.db.models import Count, F, Sum, Q
 from django.http import HttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
+import json
+
 import requests
 from rest_framework import generics
 from rest_framework.parsers import FormParser, MultiPartParser
-from api.ai import SYSTEM_PROMPT, ask_ai, build_summary
+from api.ai import SYSTEM_PROMPT, ask_ai, build_summary, parse_expense_text
 from api.utils import month_start
 from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
 from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
@@ -35,6 +37,7 @@ from api.serializers import (
     MonthlyReportSerializer,
     PaymentMethodSerializer,
     PaymentMethodStatisticsSerializer,
+    QuickAddSerializer,
     RecurrentExpenseSerializer,
     SavingContributionSerializer,
     TagSerializer,
@@ -387,6 +390,47 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             )
 
         serializer = self.get_serializer(new_expense)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='quick-add')
+    def quick_expense_add(self, request):
+        input_serializer = QuickAddSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        text = input_serializer.validated_data["text"]
+
+        # Only the AI call goes inside try: keep the try block as small as possible.
+        try:
+            parsed = parse_expense_text(request.user, text)
+        except requests.RequestException:
+            return Response({"detail": "Assistant is unavailable, try again later."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except json.JSONDecodeError:
+            # The AI answered with something that isn't JSON.
+            return Response({"detail": "Could not understand the text."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Never trust AI output: it may be a list, or the {"error": ...} from the prompt.
+        if not isinstance(parsed, dict) or "error" in parsed:
+            return Response({"detail": "Could not find an expense in the text."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # iexact: "food" from the AI still matches the user's "Food" category.
+        category_name = str(parsed.get("category") or "")
+        category = Category.objects.filter(user=request.user, name__iexact=category_name).first()
+        if category is None:
+            return Response({"category": [f"You have no category named '{category_name}'."]},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # .get(): a missing key becomes None, and the serializer answers 400
+        # ("This field may not be null.") instead of the view crashing with KeyError.
+        serializer = self.get_serializer(data={
+            "title": parsed.get("title"),
+            "amount": parsed.get("amount"),
+            "date": parsed.get("date"),
+            "category": category.pk,
+        })
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)  # also creates the ExpenseHistory row
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class BudgetViewSet(viewsets.ModelViewSet):
