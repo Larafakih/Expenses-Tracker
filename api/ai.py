@@ -3,9 +3,11 @@ import os
 from decimal import Decimal
 
 import requests
+from django.core.exceptions import ValidationError
 from django.db.models import Sum
 from django.utils import timezone
 
+from api.ai_tools import TOOL_FUNCTIONS, TOOLS
 from api.models import Budget, Category, Expense, Income
 from api.utils import month_start
 
@@ -38,12 +40,20 @@ EXPENSE_PARSER_PROMPT = (
 
 
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+MODEL = "openai/gpt-oss-20b"
+
+
+def groq_headers():
+    return {"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"}
+
+
 def ask_ai(system_prompt, user_message):
     response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
+        GROQ_URL,
+        headers=groq_headers(),
         json={
-            "model": "openai/gpt-oss-20b",
+            "model": MODEL,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -134,3 +144,54 @@ def parse_expense_text(user, text):
     )
     answer = ask_ai(prompt, text)
     return json.loads(answer)
+
+def chat(messages, tools=None):
+    """Send a whole conversation; return the AI's full message (text OR tool_calls)."""
+    body = {"model": MODEL, "messages": messages}
+    if tools:
+        body["tools"] = tools
+    response = requests.post(GROQ_URL, headers=groq_headers(), json=body, timeout=30)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]
+
+
+def run_tool(user, call):
+    """Run one tool the AI asked for. Always returns something JSON-able, never raises."""
+    name = call["function"]["name"]
+    func = TOOL_FUNCTIONS.get(name)          # only OUR listed functions can run
+    if func is None:
+        return {"error": f"Unknown tool {name}"}
+    try:
+        args = json.loads(call["function"]["arguments"] or "{}")
+        # user comes from our code, never from the AI
+        return func(user, **args)
+    except (json.JSONDecodeError, TypeError, ValueError, ValidationError) as exc:
+        # Sent back to the AI, which usually fixes its call in the next round.
+        return {"error": str(exc)}
+
+
+def ask_with_tools(user, question, max_rounds=5):
+    messages = [
+        {"role": "system", "content": f"You help the user with their expenses. Today is {timezone.localdate()}. "
+                                      "Use the tools to get data. Never invent numbers."},
+        {"role": "user", "content": question},
+    ]
+    for _ in range(max_rounds):
+        msg = chat(messages, tools=TOOLS)
+        if not msg.get("tool_calls"):
+            return msg.get("content") or "Sorry, I couldn't answer that."   # final text answer
+        # Keep the AI's tool request in the history. Copy only the standard fields:
+        # Groq also returns extra ones (like "reasoning") that it may refuse if sent back.
+        messages.append({
+            "role": "assistant",
+            "content": msg.get("content") or "",
+            "tool_calls": msg["tool_calls"],
+        })
+        for call in msg["tool_calls"]:
+            result = run_tool(user, call)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],         # links the result to the request
+                "content": json.dumps(result),
+            })
+    return "Sorry, I couldn't answer that."
