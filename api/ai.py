@@ -1,3 +1,4 @@
+import json
 import os
 from decimal import Decimal
 
@@ -5,7 +6,7 @@ import requests
 from django.db.models import Sum
 from django.utils import timezone
 
-from api.models import Budget, Expense, Income
+from api.models import Budget, Category, Expense, Income
 from api.utils import month_start
 
 
@@ -24,6 +25,17 @@ SYSTEM_PROMPT = (
     "\n"
     "DATA:\n{summary}"
 )
+
+EXPENSE_PARSER_PROMPT = (
+    "Extract ONE expense from the user's text.\n"
+    "Today is {today}. The user's categories are: {categories}.\n"
+    "Rules:\n"
+    "- Answer ONLY with JSON, no other text.\n"
+    '- Format: {{"title": str, "amount": number, "date": "YYYY-MM-DD", "category": str}}\n'
+    "- category MUST be one of the user's categories, written exactly.\n"
+    '- If the text has no amount, answer {{"error": "no amount"}}.'
+)
+
 
 
 def ask_ai(system_prompt, user_message):
@@ -111,3 +123,14 @@ def build_summary(user):
         f"Budgets this month: {'; '.join(budget_lines) or 'none'}",
     ]
     return "\n".join(lines)
+
+def parse_expense_text(user, text):
+    categories = list(Category.objects.filter(user=user).values_list("name", flat=True))
+    # localdate(): only the date ("2026-11-17"), in the project's timezone.
+    # ", ".join(): "Food, Transport" instead of the Python list "['Food', 'Transport']".
+    prompt = EXPENSE_PARSER_PROMPT.format(
+        today=timezone.localdate().isoformat(),
+        categories=", ".join(categories),
+    )
+    answer = ask_ai(prompt, text)
+    return json.loads(answer)

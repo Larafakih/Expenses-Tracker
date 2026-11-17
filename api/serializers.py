@@ -507,3 +507,6 @@ class UpcomingQuerySerializer(serializers.Serializer):
 
 class AskQuestionSerializer(serializers.Serializer):
     question = serializers.CharField(max_length=500)
+
+class QuickAddSerializer(serializers.Serializer):
+    text = serializers.CharField(max_length=300)
