@@ -56,6 +56,8 @@ from rest_framework.views import APIView
 from django.db import transaction
 from rest_framework.pagination import PageNumberPagination, LimitOffsetPagination
 from rest_framework.throttling import ScopedRateThrottle
+from api.ai import SYSTEM_PROMPT, ask_ai, ask_with_tools, build_summary, parse_expense_text
+
 
 
 # Create your views here.
@@ -879,3 +881,20 @@ class AssistantAskView(generics.GenericAPIView):
         except requests.RequestException:
             return Response({"detail": "Assistant is unavailable, try again later."},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+class AssistantAgentView(generics.GenericAPIView):
+    serializer_class = AskQuestionSerializer          # same input: {"question": "..."}
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "assistant-agent"
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        question = serializer.validated_data["question"]
+        try:
+            answer = ask_with_tools(request.user, question)
+        except requests.RequestException:
+            return Response({"detail": "Assistant is unavailable, try again later."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"answer": answer})
