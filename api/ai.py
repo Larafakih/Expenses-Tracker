@@ -173,7 +173,7 @@ def run_tool(user, call):
 def ask_with_tools(user, question, max_rounds=5):
     messages = [
         {"role": "system", "content": f"You help the user with their expenses. Today is {timezone.localdate()}. "
-                                      "Use the tools to get data. Never invent numbers."},
+                                      f"Use the tools to get data. Never invent numbers. {SYSTEM_PROMPT}"},
         {"role": "user", "content": question},
     ]
     for _ in range(max_rounds):

@@ -3,8 +3,13 @@ import csv
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
 from django.db.models import Count, F, Sum, Q
 from django.http import HttpResponse
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 import json
@@ -35,6 +40,8 @@ from api.serializers import (
     LogoutSerializer,
     MonthlyReportQuerySerializer,
     MonthlyReportSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     PaymentMethodSerializer,
     PaymentMethodStatisticsSerializer,
     QuickAddSerializer,
@@ -898,3 +905,58 @@ class AssistantAgentView(generics.GenericAPIView):
             return Response({"detail": "Assistant is unavailable, try again later."},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"answer": answer})
+
+class PasswordResetRequestView(generics.GenericAPIView):
+    serializer_class = PasswordResetRequestSerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password-reset"
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        # filter() returns a QUERYSET (0, 1 or more users): email isn't unique in Django.
+        users = User.objects.filter(email__iexact=email, is_active=True)
+        for user in users:
+            send_password_reset_email(user)
+
+        # Same answer whether the email exists or not: never reveal who has an account.
+        return Response({"detail": "If this email exists, a reset link was sent."},
+                        status=status.HTTP_200_OK)
+
+
+def send_password_reset_email(user):
+    uid = urlsafe_base64_encode(force_bytes(user.pk))       # which user (not secret)
+    token = default_token_generator.make_token(user)        # proof they got this email (secret)
+    link = f"{settings.FRONTEND_RESET_URL}?uid={uid}&token={token}"
+    minutes = settings.PASSWORD_RESET_TIMEOUT // 60
+
+    message = (
+        f"Hi {user.get_username()},\n"
+        "\n"
+        "We received a request to reset the password of your Expense Tracker account.\n"
+        "Click the link below to choose a new password:\n"
+        "\n"
+        f"{link}\n"
+        "\n"
+        f"This link expires in {minutes} minutes and can only be used once.\n"
+        "\n"
+        "If you didn't ask for this, you can ignore this email: your password won't change.\n"
+    )
+    send_mail("Reset your Expense Tracker password", message, None, [user.email])
+
+class PasswordResetConfirmView(generics.GenericAPIView):
+    serializer_class = PasswordResetConfirmSerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password-reset-confirm"
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
