@@ -6,7 +6,8 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
-from django.db.models import Count, F, Sum, Q
+from django.db.models import Count, DecimalField, F, Sum, Q
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -451,11 +452,80 @@ class BudgetViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         if not self.request.user.is_staff:
             qs= qs.filter(user= self.request.user)
-        return qs
+
+        # Total spent per budget in the same query (read by BudgetSerializer).
+        # Only the budget owner's non-deleted expenses in that category/month/year.
+        expense_filter = Q(
+            category__expense__user=F("user"),
+            category__expense__is_deleted=False,
+            category__expense__date__year=F("year"),
+            category__expense__date__month=F("month"),
+        )
+        return qs.annotate(
+            spent_total=Coalesce(
+                Sum("category__expense__amount", filter=expense_filter),
+                Decimal("0.00"),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            )
+        )
 
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        budget = serializer.save()
+        # The annotated total is from before the edit (month/category may have
+        # changed), so drop it and let the serializer recompute.
+        budget.spent_total = None
+
+    @action(detail=False, methods=['get'], url_path='status')
+    def get_budget_status(self, request):
+        params = MonthlyReportQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        month = params.validated_data["month"]
+        year = params.validated_data["year"]
+
+        start = month_start(year, month)
+        end = month_start(year, month + 1)
+
+        user_expenses = Expense.objects.filter(user=request.user, is_deleted=False)
+        expenses = user_expenses.filter(date__gte=start, date__lt=end)
+
+        # One query: total spent per category this month -> {category_id: total}
+        spent_by_category = {
+            row["category"]: row["spent"]
+            for row in expenses.values("category").annotate(spent=Sum("amount"))
+        }
+
+        # The user's budgets for this month
+        budgets = (
+            Budget.objects.filter(user=request.user, year=year, month=month)
+            .select_related("category")
+            .order_by("category__name")
+        )
+
+        results = []
+        for budget in budgets:
+            # a category with no expenses this month isn't in the dict -> 0
+            spent = spent_by_category.get(budget.category_id, Decimal("0.00"))
+            results.append({
+                "budget_id": budget.budget_id,
+                "category_id": budget.category_id,
+                "category": budget.category.name,
+                "budget": budget.amount,
+                "spent": spent,
+                "remaining": max(budget.amount - spent, Decimal("0.00")),
+                "percent_used": round(spent / budget.amount * 100, 2),
+                "is_over_budget": spent > budget.amount,
+            })
+
+        return Response({
+            "month": month,
+            "year": year,
+            "budgets": results,
+        })
+
 
 class RecurrentExpenseViewSet(viewsets.ModelViewSet):
     serializer_class = RecurrentExpenseSerializer

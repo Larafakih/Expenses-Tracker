@@ -156,22 +156,30 @@ class BudgetSerializer(serializers.ModelSerializer):
 
         return category
 
-    def get_spent(self, obj):
-        total = Expense.objects.filter(
-            user=obj.user,
-            category=obj.category,
-            date__month=obj.month,
-            date__year=obj.year,
-        ).aggregate(total=Sum("amount"))
+    def _spent(self, obj):
+        # BudgetViewSet annotates `spent_total` on list/retrieve (no extra query).
+        # After create/update the instance isn't annotated, so compute it once
+        # and cache it on the object so spent/remaining/percentage share it.
+        if getattr(obj, "spent_total", None) is None:
+            total = Expense.objects.filter(
+                user=obj.user,
+                category=obj.category,
+                is_deleted=False,
+                date__month=obj.month,
+                date__year=obj.year,
+            ).aggregate(total=Sum("amount"))["total"]
+            obj.spent_total = total or Decimal("0.00")
+        return obj.spent_total
 
-        return total["total"] or Decimal("0.00")
+    def get_spent(self, obj):
+        return self._spent(obj)
 
     def get_remaining(self, obj):
-        spent = self.get_spent(obj)
+        spent = self._spent(obj)
         return obj.amount - spent
 
     def get_percentage_used(self, obj):
-        spent = self.get_spent(obj)
+        spent = self._spent(obj)
 
         if obj.amount <= 0:
             return 0
