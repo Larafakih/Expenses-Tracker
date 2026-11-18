@@ -137,11 +137,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# Console backend: emails are printed in the runserver terminal, nothing is really sent.
+# In production, only this line changes (e.g. to SMTP).
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "noreply@expense-tracker.local"
+
+# Password reset
+PASSWORD_RESET_TIMEOUT = 60 * 60                              # reset links work for 1 hour (default: 3 days)
+FRONTEND_RESET_URL = "http://localhost:3000/reset-password"   # our own setting: the page with the "new password" form
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -156,6 +159,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
                                 'assistant': '20/hour',
                                 'assistant-agent': '10/hour',
+                                'password-reset': '5/hour',           # sending reset emails
+                                'password-reset-confirm': '10/hour',  # trying a token + new password
                             },
 
     }
@@ -206,3 +211,4 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     # OTHER SETTINGS
 }
+

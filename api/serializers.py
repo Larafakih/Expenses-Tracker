@@ -11,6 +11,10 @@ from decimal import Decimal
 from django.db.models import Sum
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils.http import urlsafe_base64_decode
+from django.contrib.auth.tokens import default_token_generator
+
+
 
 
 
@@ -510,3 +514,44 @@ class AskQuestionSerializer(serializers.Serializer):
 
 class QuickAddSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=300)
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        # Lock 1: uid → user (None if broken)
+        try:
+            user_id = urlsafe_base64_decode(attrs["uid"]).decode()   # "Mg" → "2"
+            user = User.objects.get(pk=user_id, is_active=True)      # find user 2 (disabled accounts can't reset)
+        except (ValueError, TypeError, OverflowError, User.DoesNotExist):
+            user = None                                              # broken uid or no such user
+
+        # Lock 2: user is None or check_token is False → ValidationError on "token"
+        if user is None or not default_token_generator.check_token(user, attrs["token"]):
+            raise serializers.ValidationError({"token": "This link is invalid or has expired."})
+
+        # Lock 3: passwords match + validate_password (copy from ChangePasswordSerializer)
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        try:
+            validate_password(attrs["new_password"], user)        # Django's rules: too short, too common...
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+
+        # Remember the user for save()
+        attrs["user"] = user
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.validated_data["user"]                     # the user found in validate()
+        user.set_password(self.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return user

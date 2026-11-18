@@ -12,6 +12,8 @@ urlpatterns = [
     path('reports/cash-flow/', views.NetCashView.as_view()),
     path('assistant/ask/', views.AssistantAskView.as_view()), 
     path('assistant/agent/', views.AssistantAgentView.as_view()),
+    path('users/password-reset/', views.PasswordResetRequestView.as_view()),
+    path('users/password-reset/confirm/', views.PasswordResetConfirmView.as_view()),
 
     ]
 
