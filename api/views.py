@@ -882,8 +882,6 @@ class IncomeViewSet(viewsets.ModelViewSet):
         })
         return Response(serializer.data)
 
-class CashFlowView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
 
 class NetCashView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -901,11 +899,13 @@ class NetCashView(APIView):
         expenses = user_expenses.filter(date__gte=start, date__lt=end)
         income = Income.objects.filter(user=request.user, date__gte=start, date__lt=end)
 
+        # Sum() returns None when there are no rows; default=0 turns that into 0.00
+        # (same as Coalesce(Sum('amount'), Decimal('0.00'))).
         expenses_total = expenses.aggregate(
-                    total_expense=Sum('amount'),
+                    total_expense=Sum('amount', default=Decimal('0.00')),
                 )
         incomes_total = income.aggregate(
-                            total_income=Sum('amount'),
+                            total_income=Sum('amount', default=Decimal('0.00')),
                         )
 
         net_cash_flow = incomes_total['total_income'] - expenses_total['total_expense']
