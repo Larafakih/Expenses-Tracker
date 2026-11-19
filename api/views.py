@@ -157,6 +157,33 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.for_user(self.request.user)
         return qs.order_by("-date")
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data  # already converted: Decimal amount, Category object, datetime
+
+        # ?force=true lets the user save a real duplicate (e.g. two identical coffees)
+        force = request.query_params.get("force", "").lower() == "true"
+        if not force:
+            duplicates = Expense.objects.active().for_user(request.user).filter(
+                title = data['title'],
+                amount=data["amount"],
+                category=data["category"],
+                date__date=timezone.localdate(data["date"]),  # same calendar day, any time
+            )
+            if duplicates.exists():
+                return Response(
+                    {
+                        "detail": "An expense with this amount and category already exists on this date.",
+                        "possible_duplicates": self.get_serializer(duplicates, many=True).data,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         with transaction.atomic():
             expense = serializer.save(user=self.request.user)
