@@ -4,10 +4,12 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Category, Expense, RecurrentExpense, Tag, User
+from api.models import Budget, Category, Expense, RecurrentExpense, Tag, User
 from api.views import month_start, scheduled_dates
 from datetime import timedelta
 from django.core.management import call_command
+from decimal import Decimal
+
 
 
 class ExpenseSoftDeleteTests(APITestCase):
@@ -403,5 +405,98 @@ class PurgeTrashCommandTest(APITestCase):
         self.assertTrue(Expense.objects.filter(pk=self.recent_trashed.expense_id).exists())
         self.assertTrue(Expense.objects.filter(pk=self.active.expense_id).exists())
 
+    def test_purge_dry_run_do_not_delete(self):
+        call_command("purge_trash", days=30, dry_run=True)
+        self.assertTrue(Expense.objects.filter(pk=self.old_trashed.expense_id).exists())
+        self.assertTrue(Expense.objects.filter(pk=self.recent_trashed.expense_id).exists())
+        self.assertTrue(Expense.objects.filter(pk=self.active.expense_id).exists())
 
- 
+
+class CopyPreviousBudgetsTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.rent = Category.objects.create(name="Rent", user=self.user)
+        Budget.objects.create(user=self.user, category=self.food, year=2026, month=12, amount="200.00")
+        Budget.objects.create(user=self.user, category=self.rent, year=2026, month=1, amount="900.00")
+        # Rent budget: January 2026 (wrong year, must not be copied)
+        self.client.force_authenticate(user=self.user)
+
+    def test_january_copies_from_previous_december(self):
+        response = self.client.post(
+            "/budgets/copy-previous/", {"year": 2027, "month": 1}, format="json"
+        )
+        # assert 201
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data["created"]), 1)
+        self.assertEqual(response.data["created"][0]['category'], 'Food')
+
+        jan_budgets = Budget.objects.filter(user=self.user, year=2027, month=1)
+        self.assertEqual(jan_budgets.count(), 1)
+        self.assertEqual(jan_budgets.first().category, self.food)
+        self.assertEqual(jan_budgets.first().amount , Decimal("200.00"))
+
+class DuplicateExpenseTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.category = Category.objects.create(name="Food", user=self.user)
+        self.existing = Expense.objects.create(
+            title="Coffee", amount="4.50", category=self.category,
+            user=self.user, date="2026-11-02T08:00:00Z",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.body = {
+            "title": "Coffee",
+            "amount": "4.50",
+            "category": str(self.category.category_id),
+            "date": "2026-11-02T16:00:00Z",
+        }
+
+    def test_same_day_duplicate_returns_409(self):
+        response = self.client.post("/expenses/", self.body, format="json")
+        possible_duplicates = response.data['possible_duplicates']
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(len(possible_duplicates), 1)
+        self.assertEqual(possible_duplicates[0]["expense_id"] , str(self.existing.expense_id))
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), 1)
+
+    def test_force_true_creates_duplicate(self):
+        response = self.client.post("/expenses/?force=true", self.body, format="json")
+        # assert 201
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # assert user now has 2 expenses
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), 2)
+
+
+class BudgetStatusTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.rent = Category.objects.create(name="Rent", user=self.user)
+        Budget.objects.create(user=self.user, category=self.food, year=2026, month=11, amount="200.00")
+        Budget.objects.create(user=self.user, category=self.rent, year=2026, month=11, amount="500.00")
+
+        def add(category, amount, date, **extra):
+            Expense.objects.create(title="x", amount=amount, category=category,
+                                   user=self.user, date=date, **extra)
+
+        add(self.food, "50.00", "2026-11-03T10:00:00Z")
+        add(self.food, "30.00", "2026-11-10T10:00:00Z")
+        add(self.food, "100.00", "2026-11-12T10:00:00Z", is_deleted=True)   # trashed
+        add(self.food, "70.00", "2026-10-15T10:00:00Z")                     # other month
+        # Rent: 600.00 in November
+        add(self.rent, "600.00", "2026-11-10T10:00:00Z")
+        self.client.force_authenticate(user=self.user)
+
+    def test_budget_status_totals(self):
+        response = self.client.get("/budgets/status/?year=2026&month=11")
+        # assert 200
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        food, rent = response.data["budgets"]
+
+        self.assertEqual(food["spent"],80.00) 
+        self.assertEqual(food["percent_used"],40.00) 
+        self.assertFalse(food["is_over_budget"]) 
+
+        self.assertEqual(rent["remaining"], Decimal("0.00"))
+        self.assertTrue(rent["is_over_budget"]) 
