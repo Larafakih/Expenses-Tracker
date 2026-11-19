@@ -6,6 +6,8 @@ from rest_framework.test import APITestCase
 
 from api.models import Category, Expense, RecurrentExpense, Tag, User
 from api.views import month_start, scheduled_dates
+from datetime import timedelta
+from django.core.management import call_command
 
 
 class ExpenseSoftDeleteTests(APITestCase):
@@ -373,7 +375,33 @@ class DeletedAtTrackingTest(APITestCase):
         self.expense.refresh_from_db()
         self.assertIsNone(self.expense.deleted_at)
         self.assertFalse(self.expense.is_deleted)
-        
+
+class PurgeTrashCommandTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.category = Category.objects.create(name="Food", user=self.user)
+        now = timezone.now()
+        self.old_trashed = Expense.objects.create(
+            title="Old", amount="10.00", category=self.category, user=self.user,
+            date=now, is_deleted=True, deleted_at=now - timedelta(days=31),
+        )
+        # self.recent_trashed = ...  (5 days ago)
+        self.recent_trashed = Expense.objects.create(
+                    title="recent trashed", amount="10.00", category=self.category, user=self.user,
+                    date=now, is_deleted=True, deleted_at=now - timedelta(days=5),
+                )
+        # self.active = ...          (not deleted)
+        self.active = Expense.objects.create(
+                            title="active", amount="10.00", category=self.category, user=self.user,
+                            date=now)
+
+    def test_purge_deletes_only_old_trashed_expenses(self):
+        call_command("purge_trash", days=30)
+        # assert old_trashed is gone:    Expense.objects.filter(pk=...).exists()
+        self.assertFalse(Expense.objects.filter(pk=self.old_trashed.expense_id).exists())
+        # assert the other two still exist
+        self.assertTrue(Expense.objects.filter(pk=self.recent_trashed.expense_id).exists())
+        self.assertTrue(Expense.objects.filter(pk=self.active.expense_id).exists())
 
 
  
