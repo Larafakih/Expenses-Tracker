@@ -181,7 +181,8 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         with transaction.atomic():
             instance.is_deleted = True
-            instance.save(update_fields=['is_deleted'])
+            instance.deleted_at = timezone.now()
+            instance.save(update_fields=['is_deleted', 'deleted_at'])
             ExpenseHistory.objects.create(
                                                 expense = instance,
                                                 action = ExpenseHistory.HistoryChoices.DELETED,
@@ -268,7 +269,8 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.for_user(self.request.user)
         expense = get_object_or_404(qs, pk=pk)
         expense.is_deleted = False
-        expense.save(update_fields=['is_deleted'])
+        expense.deleted_at = None
+        expense.save(update_fields=['is_deleted', 'deleted_at'])
         serializer = self.get_serializer(expense)
         return Response(serializer.data)
 
