@@ -479,6 +479,56 @@ class BudgetViewSet(viewsets.ModelViewSet):
         # changed), so drop it and let the serializer recompute.
         budget.spent_total = None
 
+    @action(detail=False, methods=['post'], url_path='copy-previous')
+    def copy_previous_month_budget(self, request):
+        params = MonthlyReportQuerySerializer(data=request.data)
+        params.is_valid(raise_exception=True)
+        month = params.validated_data["month"]
+        year = params.validated_data["year"]
+
+        # month_start handles the January -> previous December rollover
+        previous = month_start(year, month - 1)
+
+        previous_budgets = Budget.objects.filter(
+            user=request.user, year=previous.year, month=previous.month
+        ).select_related("category")
+
+        # Categories that already have a budget in the target month
+        existing_category_ids = set(
+            Budget.objects.filter(user=request.user, year=year, month=month)
+            .values_list("category_id", flat=True)
+        )
+
+        budgets_to_create = []
+        skipped = []
+        for pb in previous_budgets:
+            if pb.category_id in existing_category_ids:
+                skipped.append({"category_id": pb.category_id, "category": pb.category.name})
+            else:
+                budgets_to_create.append(Budget(
+                    category=pb.category,
+                    user=request.user,
+                    amount=pb.amount,
+                    year=year,
+                    month=month,
+                ))
+
+        Budget.objects.bulk_create(budgets_to_create)
+
+        created = [
+            {
+                "budget_id": b.budget_id,
+                "category_id": b.category_id,
+                "category": b.category.name,
+                "amount": b.amount,
+            }
+            for b in budgets_to_create
+        ]
+        return Response(
+            {"month": month, "year": year, "created": created, "skipped": skipped},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
     @action(detail=False, methods=['get'], url_path='status')
     def get_budget_status(self, request):
         params = MonthlyReportQuerySerializer(data=request.query_params)
