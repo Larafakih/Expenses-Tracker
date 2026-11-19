@@ -184,8 +184,9 @@ class Expense(models.Model):
         blank=True,
         related_name="expenses",
     )
+    deleted_at = models.DateTimeField(null=True, blank=True)
     objects = ExpenseQuerySet.as_manager()
-
+    
     class Meta:
         constraints = [
             models.CheckConstraint(
