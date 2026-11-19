@@ -252,6 +252,15 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['delete'], url_path='trash')
+    def hard_delete_soft_deleted_expenses(self, request, pk):
+        qs = Expense.objects.deleted()
+        if not request.user.is_staff:
+            qs = qs.for_user(self.request.user)
+        expense = get_object_or_404(qs, pk=pk)
+        expense.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'], url_path='restore')
     def restore_expense (self, request, pk):
         qs = Expense.objects.deleted()
