@@ -61,10 +61,11 @@ class ExpenseSerializer(serializers.ModelSerializer):
         model = Expense
         fields = ["expense_id", "title", "description", "date", "created_at", "user", "category",
                    "category_name" , "amount", "tags", "is_favorite", "payment_method", "payment_method_name",
-                   "notes_count"]
+                   "notes_count", "deleted_at"]
         extra_kwargs={
             'user': {"read_only": True},
             "is_favorite" : {"read_only": True},
+            "deleted_at" : {"read_only": True},
         }
 
     def get_notes_count(self, obj):

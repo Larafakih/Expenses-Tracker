@@ -6,6 +6,8 @@ from rest_framework.test import APITestCase
 
 from api.models import Category, Expense, RecurrentExpense, Tag, User
 from api.views import month_start, scheduled_dates
+from datetime import timedelta
+from django.core.management import call_command
 
 
 class ExpenseSoftDeleteTests(APITestCase):
@@ -289,9 +291,117 @@ class ChangePasswordTests(APITestCase):
         self.assertEqual(login_old_pass.status_code, status.HTTP_401_UNAUTHORIZED)
 
         
+class HardExpenseDeleteTest(APITestCase):
+    def setUp(self):
+        self.user1 = User.objects.create_user(username="lara1", password="pass12345")
+        self.category1 = Category.objects.create(name="Food", user=self.user1)
+        self.soft_deleted_expense1 = Expense.objects.create(
+            title="Lunch",
+            amount="12.50",
+            category=self.category1,
+            user=self.user1,
+            date=timezone.now(),
+            is_deleted=True,
+            deleted_at="2026-11-19T12:43:46.368536Z"
+        )
+        self.expense1 = Expense.objects.create(
+                    title="Lunch",
+                    amount="12.50",
+                    category=self.category1,
+                    user=self.user1,
+                    date=timezone.now(),
+                )
 
-      
 
+    def test_hard_delete_solft_Deleted_expense(self):
+        self.client.force_authenticate(user=self.user1)
+        response = self.client.delete(
+            f"/expenses/{self.soft_deleted_expense1.expense_id}/trash/",
+            format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        get_deleted_expense_response = self.client.get(
+            f"/expenses/{self.soft_deleted_expense1.expense_id}/",
+            format="json",
+            )
+        self.assertEqual(get_deleted_expense_response.status_code, status.HTTP_404_NOT_FOUND)
+        # The GET above is 404 even before a hard delete (trashed expenses are hidden),
+        # so check the database to prove the row is really gone.
+        self.assertFalse(Expense.objects.filter(pk=self.soft_deleted_expense1.pk).exists())
+
+        delete_active_expense_response = self.client.delete(f"/expenses/{self.expense1.expense_id}/trash/",
+            format="json",
+            )
+        self.assertEqual(delete_active_expense_response.status_code, status.HTTP_404_NOT_FOUND)
+        get_deleted_active_expense_response = self.client.get(
+                f"/expenses/{self.expense1.expense_id}/",
+                format="json",
+                )
+        self.assertEqual(get_deleted_active_expense_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(get_deleted_active_expense_response.data["expense_id"], str(self.expense1.expense_id))
+
+class DeletedAtTrackingTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.category = Category.objects.create(name="Food", user=self.user)
+        self.expense = Expense.objects.create(
+            title="Lunch", amount="12.50", category=self.category,
+            user=self.user, date=timezone.now(),
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_delete_sets_and_restore_clears_deleted_at(self):
+        self.assertIsNone(self.expense.deleted_at)
+
+        # 1. soft delete (DELETE /expenses/<id>/, not /trash/) -> assert 204
+        response = self.client.delete(
+                    f"/expenses/{self.expense.expense_id}/",
+                    format="json",
+                    )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        # 2. refresh_from_db() updates self.expense in place (it returns None)
+        self.expense.refresh_from_db()
+        self.assertIsNotNone(self.expense.deleted_at)
+        self.assertTrue(self.expense.is_deleted)
+        # 3. restore      -> assert 200
+        response = self.client.post(
+                            f"/expenses/{self.expense.expense_id}/restore/",
+                            format="json",
+                            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # 4. refresh again -> assert is_deleted / deleted_at
+        self.expense.refresh_from_db()
+        self.assertIsNone(self.expense.deleted_at)
+        self.assertFalse(self.expense.is_deleted)
+
+class PurgeTrashCommandTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.category = Category.objects.create(name="Food", user=self.user)
+        now = timezone.now()
+        self.old_trashed = Expense.objects.create(
+            title="Old", amount="10.00", category=self.category, user=self.user,
+            date=now, is_deleted=True, deleted_at=now - timedelta(days=31),
+        )
+        # self.recent_trashed = ...  (5 days ago)
+        self.recent_trashed = Expense.objects.create(
+                    title="recent trashed", amount="10.00", category=self.category, user=self.user,
+                    date=now, is_deleted=True, deleted_at=now - timedelta(days=5),
+                )
+        # self.active = ...          (not deleted)
+        self.active = Expense.objects.create(
+                            title="active", amount="10.00", category=self.category, user=self.user,
+                            date=now)
+
+    def test_purge_deletes_only_old_trashed_expenses(self):
+        call_command("purge_trash", days=30)
+        # assert old_trashed is gone:    Expense.objects.filter(pk=...).exists()
+        self.assertFalse(Expense.objects.filter(pk=self.old_trashed.expense_id).exists())
+        # assert the other two still exist
+        self.assertTrue(Expense.objects.filter(pk=self.recent_trashed.expense_id).exists())
+        self.assertTrue(Expense.objects.filter(pk=self.active.expense_id).exists())
 
 
  
