@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Budget, Category, Expense, RecurrentExpense, Tag, User
+from api.models import Budget, Category, Expense, PaymentMethod, RecurrentExpense, Tag, User
 from api.views import month_start, scheduled_dates
 from datetime import timedelta
 from django.core.management import call_command
@@ -500,3 +500,40 @@ class BudgetStatusTest(APITestCase):
 
         self.assertEqual(rent["remaining"], Decimal("0.00"))
         self.assertTrue(rent["is_over_budget"]) 
+
+
+
+class SetDefaultPaymentMethodTest(APITestCase):
+    def setUp(self):
+        self.user_a = User.objects.create_user(username="lara", password="pass12345")
+        self.user_b = User.objects.create_user(username="sam", password="pass12345")
+        self.cash = PaymentMethod.objects.create(name="Cash", user=self.user_a, is_default=True)
+        self.visa = PaymentMethod.objects.create(name="Visa", user=self.user_a)
+        self.b_card = PaymentMethod.objects.create(name="Mastercard", user=self.user_b, is_default=True)
+        self.client.force_authenticate(user=self.user_a)
+
+    def test_set_default_unsets_previous_default(self):
+        response = self.client.post(f"/payment-methods/{self.visa.payment_method_id}/set-default/")
+        # assert 200 and response.data["is_default"] is True
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["is_default"])
+        # refresh visa, cash, b_card
+        self.visa.refresh_from_db()
+        self.cash.refresh_from_db()
+        self.b_card.refresh_from_db()
+        # assert visa True, cash False, b_card still True
+        self.assertTrue(self.visa.is_default)
+        self.assertFalse(self.cash.is_default)
+        self.assertTrue(self.b_card.is_default)
+        # assert only one default for user_a
+        self.assertEqual(PaymentMethod.objects.filter(user=self.user_a, is_default=True).count(), 1)
+
+    def test_cannot_set_another_users_method_as_default(self):
+        # post to b_card's set-default -> assert 404
+        response = self.client.post(f"/payment-methods/{self.b_card.payment_method_id}/set-default/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        # refresh b_card -> still True
+        self.b_card.refresh_from_db()
+        self.assertTrue(self.b_card.is_default)
+
+    
