@@ -880,3 +880,29 @@ class BulkExpenseCreateTest(APITestCase):
         # assert user has 100 expenses
         self.assertEqual(Expense.objects.all().count(), 100)
         self.assertEqual(len(response.data), 100)
+
+class ExpenseUpdateHistoryTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post("/expenses/", {
+            "title": "Lunch", "amount": "12.50",
+            "category": str(self.food.category_id), "date": "2026-11-20T12:00:00Z",
+        }, format="json")
+        self.expense = Expense.objects.get(pk=response.data["expense_id"])
+
+    def patch(self, data):
+        return self.client.patch(f"/expenses/{self.expense.expense_id}/", data, format="json")
+
+    def history(self):
+        return ExpenseHistory.objects.filter(expense=self.expense)
+
+    def test_amount_change_is_recorded(self):
+        response = self.patch({"amount": "20.00"})
+        # assert 200
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.history().count(), 2)
+        updated = self.history().get(action="updated")
+        self.assertEqual(updated.old_amount, Decimal("12.50"))
+        self.assertEqual(updated.new_amount, Decimal("20.00"))
