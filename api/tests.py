@@ -906,3 +906,29 @@ class ExpenseUpdateHistoryTest(APITestCase):
         updated = self.history().get(action="updated")
         self.assertEqual(updated.old_amount, Decimal("12.50"))
         self.assertEqual(updated.new_amount, Decimal("20.00"))
+
+    def test_title_change_is_not_recorded(self):
+        response = self.patch({"title": "Big lunch"})
+        # assert 200
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.history().count(), 1)
+        created = self.history().get(action="created")
+        self.assertIsNotNone(created)
+
+    def test_same_amount_is_not_recorded(self):
+        response = self.patch({"amount": "12.50"})
+        # assert 200
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.history().count(), 1)
+        created = self.history().get(action="created")
+        self.assertIsNotNone(created)
+
+    def test_history_endpoint_lists_newest_first(self):
+        response1 = self.patch({"amount": "20.00"})
+        response2 = self.patch({"amount": "25.00"})
+        response = self.client.get(f"/expenses/{self.expense.expense_id}/history/", format="json")
+        self.assertEqual(len(response.data), 3)
+        self.assertEqual(response.data[0]['new_amount'], '25.00')
+        self.assertEqual(response.data[1]['new_amount'], '20.00')
+        self.assertEqual(response.data[2]['action'], 'created')
+        
