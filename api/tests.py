@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Budget, Category, Expense, PaymentMethod, RecurrentExpense, Tag, User
+from api.models import Budget, Category, ExpenseHistory, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 from api.views import month_start, scheduled_dates
 from datetime import timedelta
 from django.core.management import call_command
@@ -536,4 +537,346 @@ class SetDefaultPaymentMethodTest(APITestCase):
         self.b_card.refresh_from_db()
         self.assertTrue(self.b_card.is_default)
 
+
+class GoalProgressTest(TestCase):          # plain TestCase: no API client needed
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.goal = Goal.objects.create(
+            title="Laptop", target_amount=Decimal("1000.00"),
+            target_date=date(2027, 6, 1), user=self.user,
+        )
+        # self.client.force_authenticate(user=self.user_a)
+
+    def contribute(self, amount):
+        SavingContribution.objects.create(goal=self.goal, amount=Decimal(amount), date=date(2026, 11, 1))
+
+    def test_no_contributions(self):
+        # assert the four properties
+        self.assertEqual(self.goal.total_saved, Decimal("0.00"))
+        self.assertEqual(self.goal.remaining_amount , Decimal("1000.00"))
+        self.assertEqual(self.goal.progress_percentage , Decimal("0.00"))
+        self.assertFalse(self.goal.is_completed)
+        
+
+    def test_partially_saved(self):
+        self.contribute("250.00")
+        self.contribute("150.00")
+        # assert the four properties
+        self.assertEqual(self.goal.total_saved, Decimal("400.00"))
+        self.assertEqual(self.goal.remaining_amount , Decimal("600.00"))
+        self.assertEqual(self.goal.progress_percentage , Decimal("40.00"))
+        self.assertFalse(self.goal.is_completed)
+
+    def test_over_saved_is_capped(self):
+        # contribute 800 + 500, assert remaining 0, progress 100, completed True
+        self.contribute("800.00")
+        self.contribute("500.00")
+        self.assertEqual(self.goal.total_saved, Decimal("1300.00"))
+        self.assertEqual(self.goal.remaining_amount , Decimal("0.00"))
+        self.assertEqual(self.goal.progress_percentage , Decimal("100.00"))
+        self.assertTrue(self.goal.is_completed)
+
+
+class ExpenseNotesTest(APITestCase):
+    def setUp(self):
+        self.user_a = User.objects.create_user(username="lara", password="pass12345")
+        self.user_b = User.objects.create_user(username="sam", password="pass12345")
+        cat_a = Category.objects.create(name="Food", user=self.user_a)
+        cat_b = Category.objects.create(name="Misc", user=self.user_b)
+        now = timezone.now()
+        self.lunch = Expense.objects.create(title="Lunch", amount="12.50", category=cat_a, user=self.user_a, date=now)
+        self.trashed = Expense.objects.create(title="Dinner", amount="10.00", category=cat_a, user=self.user_a, date=now, is_deleted=True)
+        self.b_expense = Expense.objects.create(title="Lunch", amount="12.50", category=cat_b, user=self.user_b, date=now)
+        self.client.force_authenticate(user=self.user_a)
+
+    def notes_url(self, expense):
+        return f"/expenses/{expense.expense_id}/notes/"
+
+    def test_add_and_list_note(self): 
+        # add notes test
+        response = self.client.post(f"/expenses/{self.lunch.expense_id}/notes/", data={
+            "content": "Paid with cash"
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["content"], "Paid with cash")
+        # get notes test
+        response_get_notes = self.client.get(f"/expenses/{self.lunch.expense_id}/notes/")
+        self.assertEqual(response_get_notes.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response_get_notes.data), 1)
+        # notes count test
+        response_expense = self.client.get(f"/expenses/{self.lunch.expense_id}/")
+        self.assertEqual(response_expense.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_expense.data["notes_count"], 1)
+
+    def test_blank_content_rejected(self):
+        # add empty notes test
+        response_empty = self.client.post(f"/expenses/{self.lunch.expense_id}/notes/", data={
+            "content": ""
+        })
+        self.assertEqual(response_empty.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ExpenseNote.objects.count(), 0)
+
+        # add space as notes content 
+        response_space = self.client.post(f"/expenses/{self.lunch.expense_id}/notes/", data={
+                    "content": " "
+                })
+        self.assertEqual(response_space.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ExpenseNote.objects.count(), 0)
+    def test_content_length_limit(self):
+        #  add notes with 1000 characters
+        response_1000 = self.client.post(f"/expenses/{self.lunch.expense_id}/notes/", data={
+                     "content": "a"*1000
+                 })
+        self.assertEqual(response_1000.status_code, status.HTTP_201_CREATED)
+        #  add notes with 1001 characters
+        response_1001 = self.client.post(f"/expenses/{self.lunch.expense_id}/notes/", data={
+                             "content": "a"*1001
+                         })
+        self.assertEqual(response_1001.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("content", response_1001.data)
+    def test_cannot_add_note_to_others_or_trashed_expense(self): 
+        # Adding a note to user B's expense returns 404.
+        response_user_b = self.client.post(f"/expenses/{self.b_expense.expense_id}/notes/", data={
+            "content": "test"
+        })
+        self.assertEqual(response_user_b.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Adding a note to a trashed expense of your own also returns 404, because add_note only looks at active expenses.
+        response_trashed = self.client.post(f"/expenses/{self.trashed.expense_id}/notes/", data={
+                    "content": "test"
+                })
+        self.assertEqual(response_trashed.status_code, status.HTTP_404_NOT_FOUND)
+        
+class CopyExpenseActionTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.category = Category.objects.create(name="Transport", user=self.user)
+        self.work = Tag.objects.create(name="work", user=self.user)
+        self.travel = Tag.objects.create(name="travel", user=self.user)
+        self.visa = PaymentMethod.objects.create(name="Visa", user=self.user)
+        self.taxi = Expense.objects.create(
+            title="Taxi", amount=Decimal("25.00"), category=self.category,
+            description="Airport", user=self.user, payment_method=self.visa,
+            is_favorite=True, date="2026-10-01T09:00:00Z",
+        )
+        self.taxi.tags.set([self.work, self.travel])
+        self.client.force_authenticate(user=self.user)
+
+    def duplicate_url(self, expense):
+        return f"/expenses/{expense.expense_id}/duplicate/"
+
+    def test_copies_fields_and_tags_but_not_favorite(self):
+        response = self.client.post(self.duplicate_url(self.taxi), format="json")
+        # assert 201 and new id != original id
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertNotEqual(response.data['expense_id'], str(self.taxi.expense_id))
+        # assert copied fields, set(new.tags.all()), is_favorite False
+        new = Expense.objects.get(pk=response.data["expense_id"])
+        self.assertEqual(new.amount, self.taxi.amount)
+        self.assertEqual(new.category, self.taxi.category)
+        self.assertEqual(new.title, self.taxi.title)
+        self.assertEqual(new.description, self.taxi.description)
+        self.assertEqual(new.payment_method, self.taxi.payment_method)
+        self.assertEqual(set(new.tags.all()),{self.work, self.travel} )
+        self.assertFalse(new.is_favorite)
+        # assert ExpenseHistory for new expense with action "created"
+        self.assertEqual(ExpenseHistory.objects.get(expense=new.expense_id).action, "created")
+        self.assertEqual(ExpenseHistory.objects.all().count(), 1)
+        self.assertEqual(Expense.objects.all().count(),2)
+
+        # the original is untouched
+        self.taxi.refresh_from_db()
+        self.assertTrue(self.taxi.is_favorite)
+        self.assertEqual(self.taxi.date, datetime.fromisoformat("2026-10-01T09:00:00Z"))
+
     
+class UpcomingPaymentsTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.health = Category.objects.create(name="Health", user=self.user)
+        self.fun = Category.objects.create(name="Fun", user=self.user)
+        self.today = timezone.localdate()
+
+        self.gym = RecurrentExpense.objects.create(
+            title="Gym", amount=Decimal("15.00"), category=self.health, user=self.user,
+            frequency="weekly", start_date=self.today,
+        )
+        # Netflix: monthly, start today + 10, amount 12.99
+        self.netflix = RecurrentExpense.objects.create(
+            title="Netflix", amount=Decimal("12.99"), category=self.fun, user=self.user,
+            frequency="monthly", start_date=self.today + timedelta(days=10),
+        )
+        # Old plan: monthly, start today + 5, is_active=False
+        self.old_plan = RecurrentExpense.objects.create(
+            title="Old Plan", amount=Decimal("30.00"), category=self.fun, user=self.user,
+            frequency="monthly", start_date=self.today + timedelta(days=5), is_active=False,
+        )
+        # user B + their own template (must never appear in user A's results)
+        self.user_b = User.objects.create_user(username="sam", password="pass12345")
+        self.b_category = Category.objects.create(name="Bills", user=self.user_b)
+        self.b_template = RecurrentExpense.objects.create(
+            title="Sam Rent", amount=Decimal("700.00"), category=self.b_category, user=self.user_b,
+            frequency="weekly", start_date=self.today,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_weekly_and_monthly_within_14_days(self):
+        response = self.client.get("/recurrent-expenses/upcoming/?days=14")
+        # assert 200
+        self.assertEqual(response.status_code, status.HTTP_200_OK )
+        titles = [p["title"] for p in response.data["payments"]]
+        self.assertEqual(titles.count("Gym"), 3)
+        self.assertEqual(titles.count("Netflix"), 1)
+        
+        # assert "Old plan" not in titles
+        self.assertNotIn("Old plan", titles)
+
+class FavoriteExpenseTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        category = Category.objects.create(name="Food", user=self.user)
+        now = timezone.now()
+        self.lunch = Expense.objects.create(title="Lunch", amount=Decimal("12.50"),
+                                            category=category, user=self.user, date=now)
+        self.taxi = Expense.objects.create(title="Taxi", amount=Decimal("8.00"),
+                                           category=category, user=self.user, date=now)
+        self.client.force_authenticate(user=self.user)
+
+    def test_favorite_and_unfavorite(self):
+        response = self.client.post(f"/expenses/{self.lunch.expense_id}/favorite/")
+        # assert 200 and response.data["is_favorite"] is True
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["is_favorite"])
+        # refresh_from_db, assert True
+        self.lunch.refresh_from_db()
+        self.assertTrue(self.lunch.is_favorite)
+        # unfavorite -> assert 200, False, refresh, False
+        response_unfavorite = self.client.post(f"/expenses/{self.lunch.expense_id}/unfavorite/")
+        self.assertEqual(response_unfavorite.status_code, status.HTTP_200_OK)
+        self.assertFalse(response_unfavorite.data["is_favorite"])
+        self.lunch.refresh_from_db()
+        self.assertFalse(self.lunch.is_favorite)
+
+    def test_favorites_list_shows_only_favorites(self):
+        self.client.post(f"/expenses/{self.lunch.expense_id}/favorite/")
+        response = self.client.get("/expenses/favorites/")
+        # assert 200, len == 1, title == "Lunch"
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['title'], "Lunch")
+
+class CategoryTotalsTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        now = timezone.now()
+        Expense.objects.create(title="Lunch", amount=Decimal("12.50"),
+                               category=self.food, user=self.user, date=now)
+        # Dinner: 30.00, active
+        Expense.objects.create(title="Dinner", amount=Decimal("30.00"),
+                                       category=self.food, user=self.user, date=now)
+        # Old: 100.00, is_deleted=True
+        Expense.objects.create(title="v", amount=Decimal("100.00"),
+                                               category=self.food, user=self.user, date=now, is_deleted=True)
+        self.client.force_authenticate(user=self.user)
+
+    def test_totals_ignore_trashed_expenses(self):
+        response = self.client.get(f"/categories/{self.food.category_id}/")
+        # assert 200
+        self.assertEqual(response.status_code,status.HTTP_200_OK)
+        # assert expense_count == 2
+        self.assertEqual(response.data['expense_count'], 2)
+        # assert total_spent == "42.50"
+        self.assertEqual(response.data['total_spent'], '42.50')
+
+    def test_empty_category_shows_zero(self):
+        travel = Category.objects.create(name="Travel", user=self.user)
+        # GET it, assert expense_count == 0 and total_spent == "0.00"
+        response = self.client.get(f"/categories/{travel.category_id}/")
+        # assert expense_count == 0
+        self.assertEqual(response.data['expense_count'], 0)
+        # assert total_spent == "00.00"
+        self.assertEqual(response.data['total_spent'], '0.00')
+
+class DeleteCategoryTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.groceries = Category.objects.create(name="Groceries", user=self.user)
+        self.travel = Category.objects.create(name="Travel", user=self.user)
+        now = timezone.now()
+        self.lunch = Expense.objects.create(title="Lunch", amount=Decimal("12.50"),
+                                            category=self.food, user=self.user, date=now)
+        self.old = Expense.objects.create(title="Old", amount=Decimal("60.00"), category=self.food,
+                                          user=self.user, date=now, is_deleted=True)
+        # user B + their category self.b_misc
+        self.user_b = User.objects.create_user(username="Sam", password="pass12345")
+        self.user_b_category = Category.objects.create(name="User B Categ", user=self.user_b)
+        self.client.force_authenticate(user=self.user)
+
+    def delete_url(self, category, move_to=None):
+        url = f"/categories/{category.category_id}/"
+        return f"{url}?move_to={move_to}" if move_to else url
+
+    def test_move_to_moves_expenses_then_deletes(self):
+        response = self.client.delete(self.delete_url(self.food, self.groceries.category_id))
+        # assert 204
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        # assert Food no longer exists
+        self.assertEqual(Category.objects.filter(pk=self.food.category_id).count(), 0)
+        # refresh lunch and old -> category == self.groceries
+        self.lunch.refresh_from_db()
+        self.old.refresh_from_db()
+        self.assertEqual(self.old.category.category_id, self.groceries.category_id)
+        self.assertEqual(self.lunch.category.category_id, self.groceries.category_id)
+
+
+class BulkExpenseCreateTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.client.force_authenticate(user=self.user)
+
+    def item(self, title="Lunch", amount="12.50"):
+        return {"title": title, "amount": amount,
+                "category": str(self.food.category_id), "date": "2026-11-20T12:00:00Z"}
+
+    def bulk(self, items):
+        return self.client.post("/expenses/bulk/", items, format="json")
+
+    def test_one_invalid_item_saves_nothing(self):
+        response = self.bulk([self.item("Lunch"), self.item("Bad", "-5.00"), self.item("Coffee")])
+        # assert 400
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # assert user has 0 expenses
+        self.assertEqual(Expense.objects.all().count(), 0)
+
+    def test_bulk_creates_all(self):
+        response = self.bulk([self.item("Lunch"), self.item("Taxi", "8.00"), self.item("Coffee", "3.00")])
+        # assert 201
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # assert user has 3 expenses
+        self.assertEqual(Expense.objects.all().count(), 3)
+        self.assertEqual(len(response.data), 3)
+
+    def test_empty_list_rejected(self):
+        response = self.bulk([])
+        # assert 400
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # assert user has 0 expenses
+        self.assertEqual(Expense.objects.all().count(), 0)
+
+    def test_more_than_100_rejected(self):
+        response = self.bulk(self.item() for _ in range(101))
+        # assert 400
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # assert user has 0 expenses
+        self.assertEqual(Expense.objects.all().count(), 0)
+
+    def test_100(self):
+        response = self.bulk(self.item() for _ in range(100))
+        # assert 201
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # assert user has 100 expenses
+        self.assertEqual(Expense.objects.all().count(), 100)
+        self.assertEqual(len(response.data), 100)
