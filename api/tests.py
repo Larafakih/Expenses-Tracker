@@ -931,4 +931,27 @@ class ExpenseUpdateHistoryTest(APITestCase):
         self.assertEqual(response.data[0]['new_amount'], '25.00')
         self.assertEqual(response.data[1]['new_amount'], '20.00')
         self.assertEqual(response.data[2]['action'], 'created')
-        
+
+
+from api.models import IncomeSource   # add Income too, if not already imported
+
+class IncomeSourceTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.user_b = User.objects.create_user(username="sam", password="pass12345")
+        self.salary = IncomeSource.objects.create(name="Salary", user=self.user)
+        self.b_freelance = IncomeSource.objects.create(name="Freelance", user=self.user_b)
+        self.client.force_authenticate(user=self.user)
+
+    def test_duplicate_source_name_returns_400(self):
+        response = self.client.post("/income-sources/", {"name": "salary"}, format="json")
+        # assert 400 and "name" in response.data   <- fails (500) until the serializer is fixed
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+    def test_same_name_allowed_for_different_users(self):
+        response = self.client.post("/income-sources/", {"name": "Freelancing"}, format="json")
+        self.client.force_authenticate(user=self.user_b)
+        response_b = self.client.post("/income-sources/", {"name": "Freelancing"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response_b.status_code, status.HTTP_201_CREATED)
