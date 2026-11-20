@@ -292,6 +292,16 @@ class IncomeSourceSerializer(serializers.ModelSerializer):
         fields = ["source_id", "user", "name", "created_at"]
         read_only_fields = ["source_id", "user", "created_at"]
 
+    def validate_name(self, name):
+        user = self.context["request"].user
+        qs = IncomeSource.objects.filter(user=user, name__iexact=name)
+        if self.instance:                       # when renaming, ignore the source itself
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("You already have an income source with this name.")
+        return name
+
+
 class IncomeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Income
