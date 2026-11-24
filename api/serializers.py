@@ -273,6 +273,26 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         fields = ["payment_method_id", "name", "user", "is_default", "created_at"]
         read_only_fields = [ "user", "created_at"]
 
+    def validate_name(self, name):
+            user = self.context["request"].user
+            qs = PaymentMethod.objects.filter(user=user, name__iexact=name)
+            if self.instance:                       # when renaming, ignore the source itself
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError("You already have a payment method with this name.")
+            return name
+    def validate_is_default(self, is_default):
+        if is_default:                                   # only check when someone asks for True
+            user = self.context["request"].user
+            qs = PaymentMethod.objects.filter(user=user, is_default=True)
+            if self.instance:                            # editing the current default is fine
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "You already have a default payment method. Use set-default to change it."
+                )
+        return is_default
+
 class AddExpenseNoteSerializer(serializers.ModelSerializer):
     note_id = serializers.UUIDField(read_only=True)
     content = serializers.CharField(max_length=1000)
@@ -291,6 +311,16 @@ class IncomeSourceSerializer(serializers.ModelSerializer):
         model = IncomeSource
         fields = ["source_id", "user", "name", "created_at"]
         read_only_fields = ["source_id", "user", "created_at"]
+
+    def validate_name(self, name):
+        user = self.context["request"].user
+        qs = IncomeSource.objects.filter(user=user, name__iexact=name)
+        if self.instance:                       # when renaming, ignore the source itself
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("You already have an income source with this name.")
+        return name
+
 
 class IncomeSerializer(serializers.ModelSerializer):
     class Meta:

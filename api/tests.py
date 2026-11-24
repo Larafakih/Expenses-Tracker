@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Budget, Category, ExpenseHistory, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
+from api.models import Budget, Category, ExpenseHistory, Income, IncomeSource, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 from api.views import month_start, scheduled_dates
 from datetime import timedelta
 from django.core.management import call_command
@@ -931,4 +931,204 @@ class ExpenseUpdateHistoryTest(APITestCase):
         self.assertEqual(response.data[0]['new_amount'], '25.00')
         self.assertEqual(response.data[1]['new_amount'], '20.00')
         self.assertEqual(response.data[2]['action'], 'created')
-        
+
+
+class IncomeSourceTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.user_b = User.objects.create_user(username="sam", password="pass12345")
+        self.salary = IncomeSource.objects.create(name="Salary", user=self.user)
+        self.b_freelance = IncomeSource.objects.create(name="Freelance", user=self.user_b)
+        self.client.force_authenticate(user=self.user)
+
+    def test_duplicate_source_name_returns_400(self):
+        response = self.client.post("/income-sources/", {"name": "salary"}, format="json")
+        # assert 400 and "name" in response.data   <- fails (500) until the serializer is fixed
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+    def test_same_name_allowed_for_different_users(self):
+        response = self.client.post("/income-sources/", {"name": "Freelancing"}, format="json")
+        self.client.force_authenticate(user=self.user_b)
+        response_b = self.client.post("/income-sources/", {"name": "Freelancing"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response_b.status_code, status.HTTP_201_CREATED)
+
+    def test_cannot_use_another_users_source(self):
+        response = self.client.post("/incomes/", {
+            "title": "income1",
+            "description": "description blabla",
+            "source": str(self.b_freelance.source_id),   # send the ID, not the object
+            "amount": "500.00",
+            "date": "2026-11-25T12:00:00Z",
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("source", response.data)
+        # nothing was saved
+        self.assertFalse(Income.objects.filter(user=self.user).exists())
+
+    def test_deleting_source_keeps_incomes(self):
+        response_create_income = self.client.post("/incomes/", {
+                    "title": "income1",
+                    "description": "description blabla",
+                    "source": str(self.salary.source_id),   # send the ID, not the object
+                    "amount": "500.00",
+                    "date": "2026-11-25T12:00:00Z",
+                }, format="json")
+        self.assertEqual(response_create_income.status_code, status.HTTP_201_CREATED)
+
+        income_id = response_create_income.data["income_id"]
+        income = Income.objects.get(pk=income_id)
+        response_delete_source = self.client.delete(f"/income-sources/{self.salary.source_id}/", format="json")
+        self.assertEqual(response_delete_source.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(IncomeSource.objects.filter(pk=self.salary.pk).exists())
+        income.refresh_from_db()
+        self.assertTrue(Income.objects.filter(pk=income_id).exists())
+        self.assertIsNone(income.source)
+
+class GoalFiltersTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        today = timezone.localdate()   # dates relative to today, so the test keeps working next month
+
+        self.laptop = Goal.objects.create(title='Laptop', target_amount=Decimal("1200.00"),
+                                          target_date=today + timedelta(days=10), user=self.user)
+        self.trip = Goal.objects.create(title='Trip', target_amount=Decimal("2000.00"),
+                                        target_date=today + timedelta(days=90), user=self.user)
+        self.phone = Goal.objects.create(title='Phone', target_amount=Decimal("800.00"),
+                                         target_date=today + timedelta(days=10), user=self.user)
+        self.old_goal = Goal.objects.create(title='Old Goal', target_amount=Decimal("2000.00"),
+                                            target_date=today - timedelta(days=5), user=self.user)
+
+        self.saving_laptop = SavingContribution.objects.create(goal=self.laptop, amount=Decimal("1200.00"), date=today)
+        self.saving_trip = SavingContribution.objects.create(goal=self.trip, amount=Decimal("500.00"), date=today)
+        # Phone: no contributions at all (a 0 contribution is not allowed by the model)
+        self.saving_old_goal = SavingContribution.objects.create(goal=self.old_goal, amount=Decimal("100.00"), date=today)
+
+        self.client.force_authenticate(user=self.user)
+
+    def test_completed_filter(self):
+        response = self.client.get("/saving-goals/?completed=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Check the WHOLE result, not just the first item: exactly Laptop, nothing else
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop"})
+
+        response = self.client.get("/saving-goals/?completed=false")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Phone has no contributions and must still be listed as not completed
+        self.assertEqual({g["title"] for g in response.data}, {"Trip", "Phone", "Old Goal"})
+
+    def test_upcoming_filter(self):
+        response = self.client.get("/saving-goals/?upcoming=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Check the WHOLE result, not just the first item: exactly Laptop, nothing else
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop", "Phone"})
+
+        response = self.client.get("/saving-goals/?upcoming=false")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({g["title"] for g in response.data}, {"Trip", "Old Goal"})
+
+    def test_filters_combined(self):
+        response = self.client.get("/saving-goals/?completed=false&upcoming=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({g["title"] for g in response.data}, { "Phone"})
+
+    def test_no_filter_returns_all_my_goals(self):
+        response = self.client.get("/saving-goals/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Phone has no contributions and must still be listed as not completed
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop", "Trip", "Phone", "Old Goal"})
+
+class IncomeFiltersTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.client.force_authenticate(user=self.user)
+        self.job = IncomeSource.objects.create(name="Job", user=self.user)
+        self.freelance = IncomeSource.objects.create(name="Freelance", user=self.user)
+        # Income.date is a DateTimeField, so use timezone.now() (a datetime), not localdate() (a date).
+        # Dates are in the past: income is money you already received.
+        now = timezone.now()
+        self.salary = Income.objects.create(amount=Decimal("2000"), date=now - timedelta(days=40), user=self.user, source=self.job, title="Salary", description="Salary Description")
+        self.bonus = Income.objects.create(amount=Decimal("500"), date=now - timedelta(days=10), user=self.user, source=self.job, title="Bonus", description="Bonus Description")
+        self.website = Income.objects.create(amount=Decimal("300"), date=now - timedelta(days=5), user=self.user, source=self.freelance, title="Website", description="Website Description")
+        self.gift = Income.objects.create(amount=Decimal("50"), date=now, user=self.user, title="Gift", description="Gift Description")  # no source
+
+    def test_amount_range(self):
+        response = self.client.get("/incomes/?amount_min=100&amount_max=600")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus", "Website"})
+
+    def test_amount_min_is_inclusive(self):
+        response = self.client.get("/incomes/?amount_min=500")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Salary", "Bonus"})
+
+    def test_date_range(self):
+        # Build the dates from today (same as setUp), never hard-code them:
+        # "2026-11-14" only matches Bonus on the day you wrote the test.
+        today = timezone.localdate()
+        start = (today - timedelta(days=10)).isoformat()   # Bonus's day
+        end = (today - timedelta(days=5)).isoformat()      # Website's day
+        response = self.client.get(f"/incomes/?start_date={start}&end_date={end}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus", "Website"})
+
+    def test_filter_by_source(self):
+        response = self.client.get(f"/incomes/?source={self.job.source_id}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Salary", "Bonus"})
+
+    def test_combined_filters(self):
+        response = self.client.get(f"/incomes/?source={self.job.source_id}&amount_max=1000")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus"})
+
+    def test_same_income_different_users(self):
+        user2 = User.objects.create_user(username="lara2", password="pass12345")
+        job2 = IncomeSource.objects.create(name="Job2", user=user2)
+        # Salary2 matches the filter below (2000 >= 1000), so only ownership can hide it.
+        Income.objects.create(amount=Decimal("2000"), date=timezone.now() - timedelta(days=40), user=user2, source=job2, title="Salary2", description="Salary2 Description")
+
+        response = self.client.get("/incomes/?amount_min=1000")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Compare titles (strings), not the UUID against a list of dicts.
+        self.assertEqual({income["title"] for income in response.data}, {"Salary"})
+
+class PaymentMethodsTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.client.force_authenticate(user=self.user)
+        # Prepare data with the ORM, not the API: setUp should not depend on POST working.
+        self.visa = PaymentMethod.objects.create(name="Visa", user=self.user, is_default=True)
+
+    def test_duplicate_name_rejected(self):
+        response1 = self.client.post(f"/payment-methods/", data={"name" : "Visa",
+                                "is_default" : False})
+        response2 = self.client.post(f"/payment-methods/", data={"name" : "Visa",
+                                        "is_default" : False})
+        self.assertEqual(response1.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_same_name_allowed_for_other_user(self):
+        user2 = User.objects.create_user(username="lara2", password="pass12345")
+        response1 = self.client.post("/payment-methods/", data={"name": "Mastercard", "is_default": False})
+        self.client.force_authenticate(user=user2)
+        response2 = self.client.post("/payment-methods/", data={"name": "Mastercard", "is_default": False})
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+
+    def test_rename_to_existing_name_rejected(self):
+        cash = PaymentMethod.objects.create(name="Cash", user=self.user)
+        # PATCH needs the object's id in the URL. "VISA" (other case) also tests case-insensitivity.
+        response = self.client.patch(f"/payment-methods/{cash.payment_method_id}/", data={"name": "VISA"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        cash.refresh_from_db()                  # reload from the DB: the name must not have changed
+        self.assertEqual(cash.name, "Cash")
+
+    def test_second_default_rejected(self):
+        response = self.client.post("/payment-methods/", data={"name": "Cash", "is_default": True})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Check the database directly: reload Visa and confirm it is still the default.
+        self.visa.refresh_from_db()
+        self.assertTrue(self.visa.is_default)
+        self.assertEqual(PaymentMethod.objects.filter(user=self.user, is_default=True).count(), 1)
+        self.assertFalse(PaymentMethod.objects.filter(user=self.user, name="Cash").exists())

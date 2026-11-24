@@ -57,21 +57,22 @@ class GoalFilter(django_filters.FilterSet):
         return queryset.filter(saved__lt=F("target_amount"))
 
     def filter_upcoming(self, queryset, name, value):
+        today = timezone.localdate()
+        end_date = today + timedelta(days=30)
+
         if value:
-            today = timezone.localdate()
-            end_date = today + timedelta(days=30)
+            # upcoming=true: due in the next 30 days
+            return queryset.filter(target_date__range=(today, end_date))
 
-            return queryset.filter(
-                target_date__range=(today, end_date)
-            )
-
-        return queryset
+        # upcoming=false: everything that is NOT due in the next 30 days
+        return queryset.exclude(target_date__range=(today, end_date))
 
 class IncomeFilter(django_filters.FilterSet):
     amount_min = django_filters.NumberFilter(field_name="amount", lookup_expr="gte")
     amount_max = django_filters.NumberFilter(field_name="amount", lookup_expr="lte")
-    start_date = django_filters.DateFilter(field_name="date", lookup_expr="gte")
-    end_date = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+    # Income.date is a DateTimeField: compare only its date part, so end_date includes the whole day.
+    start_date = django_filters.DateFilter(field_name="date", lookup_expr="date__gte")
+    end_date = django_filters.DateFilter(field_name="date", lookup_expr="date__lte")
     source = django_filters.UUIDFilter(field_name="source__source_id", lookup_expr="exact", )
 
     class Meta:
