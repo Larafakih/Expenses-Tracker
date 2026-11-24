@@ -985,4 +985,57 @@ class IncomeSourceTest(APITestCase):
         income.refresh_from_db()
         self.assertTrue(Income.objects.filter(pk=income_id).exists())
         self.assertIsNone(income.source)
+
+class GoalFiltersTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        today = timezone.localdate()   # dates relative to today, so the test keeps working next month
+
+        self.laptop = Goal.objects.create(title='Laptop', target_amount=Decimal("1200.00"),
+                                          target_date=today + timedelta(days=10), user=self.user)
+        self.trip = Goal.objects.create(title='Trip', target_amount=Decimal("2000.00"),
+                                        target_date=today + timedelta(days=90), user=self.user)
+        self.phone = Goal.objects.create(title='Phone', target_amount=Decimal("800.00"),
+                                         target_date=today + timedelta(days=10), user=self.user)
+        self.old_goal = Goal.objects.create(title='Old Goal', target_amount=Decimal("2000.00"),
+                                            target_date=today - timedelta(days=5), user=self.user)
+
+        self.saving_laptop = SavingContribution.objects.create(goal=self.laptop, amount=Decimal("1200.00"), date=today)
+        self.saving_trip = SavingContribution.objects.create(goal=self.trip, amount=Decimal("500.00"), date=today)
+        # Phone: no contributions at all (a 0 contribution is not allowed by the model)
+        self.saving_old_goal = SavingContribution.objects.create(goal=self.old_goal, amount=Decimal("100.00"), date=today)
+
+        self.client.force_authenticate(user=self.user)
+
+    def test_completed_filter(self):
+        response = self.client.get("/saving-goals/?completed=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Check the WHOLE result, not just the first item: exactly Laptop, nothing else
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop"})
+
+        response = self.client.get("/saving-goals/?completed=false")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Phone has no contributions and must still be listed as not completed
+        self.assertEqual({g["title"] for g in response.data}, {"Trip", "Phone", "Old Goal"})
+
+    def test_upcoming_filter(self):
+        response = self.client.get("/saving-goals/?upcoming=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Check the WHOLE result, not just the first item: exactly Laptop, nothing else
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop", "Phone"})
+
+        response = self.client.get("/saving-goals/?upcoming=false")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({g["title"] for g in response.data}, {"Trip", "Old Goal"})
+
+    def test_filters_combined(self):
+        response = self.client.get("/saving-goals/?completed=false&upcoming=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({g["title"] for g in response.data}, { "Phone"})
+
+    def test_no_filter_returns_all_my_goals(self):
+        response = self.client.get("/saving-goals/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Phone has no contributions and must still be listed as not completed
+        self.assertEqual({g["title"] for g in response.data}, {"Laptop", "Trip", "Phone", "Old Goal"})
         

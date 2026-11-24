@@ -57,15 +57,15 @@ class GoalFilter(django_filters.FilterSet):
         return queryset.filter(saved__lt=F("target_amount"))
 
     def filter_upcoming(self, queryset, name, value):
+        today = timezone.localdate()
+        end_date = today + timedelta(days=30)
+
         if value:
-            today = timezone.localdate()
-            end_date = today + timedelta(days=30)
+            # upcoming=true: due in the next 30 days
+            return queryset.filter(target_date__range=(today, end_date))
 
-            return queryset.filter(
-                target_date__range=(today, end_date)
-            )
-
-        return queryset
+        # upcoming=false: everything that is NOT due in the next 30 days
+        return queryset.exclude(target_date__range=(today, end_date))
 
 class IncomeFilter(django_filters.FilterSet):
     amount_min = django_filters.NumberFilter(field_name="amount", lookup_expr="gte")
