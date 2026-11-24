@@ -1093,3 +1093,42 @@ class IncomeFiltersTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Compare titles (strings), not the UUID against a list of dicts.
         self.assertEqual({income["title"] for income in response.data}, {"Salary"})
+
+class PaymentMethodsTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.client.force_authenticate(user=self.user)
+        # Prepare data with the ORM, not the API: setUp should not depend on POST working.
+        self.visa = PaymentMethod.objects.create(name="Visa", user=self.user, is_default=True)
+
+    def test_duplicate_name_rejected(self):
+        response1 = self.client.post(f"/payment-methods/", data={"name" : "Visa",
+                                "is_default" : False})
+        response2 = self.client.post(f"/payment-methods/", data={"name" : "Visa",
+                                        "is_default" : False})
+        self.assertEqual(response1.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_same_name_allowed_for_other_user(self):
+        user2 = User.objects.create_user(username="lara2", password="pass12345")
+        response1 = self.client.post("/payment-methods/", data={"name": "Mastercard", "is_default": False})
+        self.client.force_authenticate(user=user2)
+        response2 = self.client.post("/payment-methods/", data={"name": "Mastercard", "is_default": False})
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+
+    def test_rename_to_existing_name_rejected(self):
+        cash = PaymentMethod.objects.create(name="Cash", user=self.user)
+        # PATCH needs the object's id in the URL. "VISA" (other case) also tests case-insensitivity.
+        response = self.client.patch(f"/payment-methods/{cash.payment_method_id}/", data={"name": "VISA"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        cash.refresh_from_db()                  # reload from the DB: the name must not have changed
+        self.assertEqual(cash.name, "Cash")
+
+    def test_second_default_rejected(self):
+        response = self.client.post("/payment-methods/", data={"name": "Cash", "is_default": True})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Check the database directly: reload Visa and confirm it is still the default.
+        self.visa.refresh_from_db()
+        self.assertTrue(self.visa.is_default)
+        self.assertEqual(PaymentMethod.objects.filter(user=self.user, is_default=True).count(), 1)
+        self.assertFalse(PaymentMethod.objects.filter(user=self.user, name="Cash").exists())
