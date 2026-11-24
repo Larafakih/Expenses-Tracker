@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from api.models import Budget, Category, ExpenseHistory, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
+from api.models import Budget, Category, ExpenseHistory, Income, IncomeSource, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 from api.views import month_start, scheduled_dates
 from datetime import timedelta
 from django.core.management import call_command
@@ -933,8 +933,6 @@ class ExpenseUpdateHistoryTest(APITestCase):
         self.assertEqual(response.data[2]['action'], 'created')
 
 
-from api.models import IncomeSource   # add Income too, if not already imported
-
 class IncomeSourceTest(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="lara", password="pass12345")
@@ -955,3 +953,36 @@ class IncomeSourceTest(APITestCase):
         response_b = self.client.post("/income-sources/", {"name": "Freelancing"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response_b.status_code, status.HTTP_201_CREATED)
+
+    def test_cannot_use_another_users_source(self):
+        response = self.client.post("/incomes/", {
+            "title": "income1",
+            "description": "description blabla",
+            "source": str(self.b_freelance.source_id),   # send the ID, not the object
+            "amount": "500.00",
+            "date": "2026-11-25T12:00:00Z",
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("source", response.data)
+        # nothing was saved
+        self.assertFalse(Income.objects.filter(user=self.user).exists())
+
+    def test_deleting_source_keeps_incomes(self):
+        response_create_income = self.client.post("/incomes/", {
+                    "title": "income1",
+                    "description": "description blabla",
+                    "source": str(self.salary.source_id),   # send the ID, not the object
+                    "amount": "500.00",
+                    "date": "2026-11-25T12:00:00Z",
+                }, format="json")
+        self.assertEqual(response_create_income.status_code, status.HTTP_201_CREATED)
+
+        income_id = response_create_income.data["income_id"]
+        income = Income.objects.get(pk=income_id)
+        response_delete_source = self.client.delete(f"/income-sources/{self.salary.source_id}/", format="json")
+        self.assertEqual(response_delete_source.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(IncomeSource.objects.filter(pk=self.salary.pk).exists())
+        income.refresh_from_db()
+        self.assertTrue(Income.objects.filter(pk=income_id).exists())
+        self.assertIsNone(income.source)
+        
