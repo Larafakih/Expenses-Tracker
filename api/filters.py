@@ -70,8 +70,9 @@ class GoalFilter(django_filters.FilterSet):
 class IncomeFilter(django_filters.FilterSet):
     amount_min = django_filters.NumberFilter(field_name="amount", lookup_expr="gte")
     amount_max = django_filters.NumberFilter(field_name="amount", lookup_expr="lte")
-    start_date = django_filters.DateFilter(field_name="date", lookup_expr="gte")
-    end_date = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+    # Income.date is a DateTimeField: compare only its date part, so end_date includes the whole day.
+    start_date = django_filters.DateFilter(field_name="date", lookup_expr="date__gte")
+    end_date = django_filters.DateFilter(field_name="date", lookup_expr="date__lte")
     source = django_filters.UUIDFilter(field_name="source__source_id", lookup_expr="exact", )
 
     class Meta:

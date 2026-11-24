@@ -1038,4 +1038,58 @@ class GoalFiltersTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Phone has no contributions and must still be listed as not completed
         self.assertEqual({g["title"] for g in response.data}, {"Laptop", "Trip", "Phone", "Old Goal"})
-        
+
+class IncomeFiltersTest(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.client.force_authenticate(user=self.user)
+        self.job = IncomeSource.objects.create(name="Job", user=self.user)
+        self.freelance = IncomeSource.objects.create(name="Freelance", user=self.user)
+        # Income.date is a DateTimeField, so use timezone.now() (a datetime), not localdate() (a date).
+        # Dates are in the past: income is money you already received.
+        now = timezone.now()
+        self.salary = Income.objects.create(amount=Decimal("2000"), date=now - timedelta(days=40), user=self.user, source=self.job, title="Salary", description="Salary Description")
+        self.bonus = Income.objects.create(amount=Decimal("500"), date=now - timedelta(days=10), user=self.user, source=self.job, title="Bonus", description="Bonus Description")
+        self.website = Income.objects.create(amount=Decimal("300"), date=now - timedelta(days=5), user=self.user, source=self.freelance, title="Website", description="Website Description")
+        self.gift = Income.objects.create(amount=Decimal("50"), date=now, user=self.user, title="Gift", description="Gift Description")  # no source
+
+    def test_amount_range(self):
+        response = self.client.get("/incomes/?amount_min=100&amount_max=600")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus", "Website"})
+
+    def test_amount_min_is_inclusive(self):
+        response = self.client.get("/incomes/?amount_min=500")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Salary", "Bonus"})
+
+    def test_date_range(self):
+        # Build the dates from today (same as setUp), never hard-code them:
+        # "2026-11-14" only matches Bonus on the day you wrote the test.
+        today = timezone.localdate()
+        start = (today - timedelta(days=10)).isoformat()   # Bonus's day
+        end = (today - timedelta(days=5)).isoformat()      # Website's day
+        response = self.client.get(f"/incomes/?start_date={start}&end_date={end}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus", "Website"})
+
+    def test_filter_by_source(self):
+        response = self.client.get(f"/incomes/?source={self.job.source_id}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Salary", "Bonus"})
+
+    def test_combined_filters(self):
+        response = self.client.get(f"/incomes/?source={self.job.source_id}&amount_max=1000")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({income["title"] for income in response.data}, {"Bonus"})
+
+    def test_same_income_different_users(self):
+        user2 = User.objects.create_user(username="lara2", password="pass12345")
+        job2 = IncomeSource.objects.create(name="Job2", user=user2)
+        # Salary2 matches the filter below (2000 >= 1000), so only ownership can hide it.
+        Income.objects.create(amount=Decimal("2000"), date=timezone.now() - timedelta(days=40), user=user2, source=job2, title="Salary2", description="Salary2 Description")
+
+        response = self.client.get("/incomes/?amount_min=1000")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Compare titles (strings), not the UUID against a list of dicts.
+        self.assertEqual({income["title"] for income in response.data}, {"Salary"})
