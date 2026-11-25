@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 
 from api.models import Budget, Category, ExpenseHistory, Income, IncomeSource, Expense, Goal, ExpenseNote, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 from api.views import month_start, scheduled_dates
+from api.services import copy_previous_month_budgets
 from datetime import timedelta
 from django.core.management import call_command
 from decimal import Decimal
@@ -1132,3 +1133,26 @@ class PaymentMethodsTest(APITestCase):
         self.assertTrue(self.visa.is_default)
         self.assertEqual(PaymentMethod.objects.filter(user=self.user, is_default=True).count(), 1)
         self.assertFalse(PaymentMethod.objects.filter(user=self.user, name="Cash").exists())
+
+class CopyBudgetsServiceTest(TestCase):
+    """Tests the service directly: no URL, no client, no request, no JSON. Just a function call."""
+    def setUp(self):
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.food = Category.objects.create(name="Food", user=self.user)
+        self.rent = Category.objects.create(name="Rent", user=self.user)
+        Budget.objects.create(user=self.user, category=self.food, year=2026, month=10, amount=Decimal("200.00"))
+        Budget.objects.create(user=self.user, category=self.rent, year=2026, month=10, amount=Decimal("900.00"))
+        # Rent already has a November budget -> must be skipped, not overwritten
+        Budget.objects.create(user=self.user, category=self.rent, year=2026, month=11, amount=Decimal("950.00"))
+
+    def test_copies_missing_and_skips_existing(self):
+        result = copy_previous_month_budgets(user=self.user, year=2026, month=11)
+
+        # The result holds real Budget objects, so we can check their fields directly
+        self.assertEqual([b.category for b in result.created], [self.food])
+        self.assertEqual([b.category for b in result.skipped], [self.rent])
+
+        # And the database was really updated
+        self.assertTrue(Budget.objects.filter(user=self.user, category=self.food, year=2026, month=11, amount=Decimal("200.00")).exists())
+        rent_nov = Budget.objects.get(user=self.user, category=self.rent, year=2026, month=11)
+        self.assertEqual(rent_nov.amount, Decimal("950.00"))   # not overwritten with 900
