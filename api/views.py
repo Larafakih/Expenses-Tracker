@@ -20,6 +20,7 @@ from rest_framework import generics
 from rest_framework.parsers import FormParser, MultiPartParser
 from api.ai import SYSTEM_PROMPT, ask_ai, build_summary, parse_expense_text
 from api.utils import month_start
+from api.services import copy_previous_month_budgets, get_cash_flow
 from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
 from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
 from api.serializers import (
@@ -519,40 +520,16 @@ class BudgetViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='copy-previous')
     def copy_previous_month_budget(self, request):
+        # 1. Read + validate the request (HTTP stuff: the view's job)
         params = MonthlyReportQuerySerializer(data=request.data)
         params.is_valid(raise_exception=True)
         month = params.validated_data["month"]
         year = params.validated_data["year"]
 
-        # month_start handles the January -> previous December rollover
-        previous = month_start(year, month - 1)
+        # 2. Do the work (business logic: the service's job)
+        result = copy_previous_month_budgets(user=request.user, year=year, month=month)
 
-        previous_budgets = Budget.objects.filter(
-            user=request.user, year=previous.year, month=previous.month
-        ).select_related("category")
-
-        # Categories that already have a budget in the target month
-        existing_category_ids = set(
-            Budget.objects.filter(user=request.user, year=year, month=month)
-            .values_list("category_id", flat=True)
-        )
-
-        budgets_to_create = []
-        skipped = []
-        for pb in previous_budgets:
-            if pb.category_id in existing_category_ids:
-                skipped.append({"category_id": pb.category_id, "category": pb.category.name})
-            else:
-                budgets_to_create.append(Budget(
-                    category=pb.category,
-                    user=request.user,
-                    amount=pb.amount,
-                    year=year,
-                    month=month,
-                ))
-
-        Budget.objects.bulk_create(budgets_to_create)
-
+        # 3. Turn the result into a response (HTTP stuff: the view's job)
         created = [
             {
                 "budget_id": b.budget_id,
@@ -560,7 +537,11 @@ class BudgetViewSet(viewsets.ModelViewSet):
                 "category": b.category.name,
                 "amount": b.amount,
             }
-            for b in budgets_to_create
+            for b in result.created
+        ]
+        skipped = [
+            {"category_id": b.category_id, "category": b.category.name}
+            for b in result.skipped
         ]
         return Response(
             {"month": month, "year": year, "created": created, "skipped": skipped},
@@ -980,32 +961,15 @@ class NetCashView(APIView):
         month = params.validated_data["month"]
         year = params.validated_data["year"]
 
-
-        start = month_start(year, month)
-        end = month_start(year, month + 1)
-        user_expenses = Expense.objects.filter(user=request.user, is_deleted=False)
-        expenses = user_expenses.filter(date__gte=start, date__lt=end)
-        income = Income.objects.filter(user=request.user, date__gte=start, date__lt=end)
-
-        # Sum() returns None when there are no rows; default=0 turns that into 0.00
-        # (same as Coalesce(Sum('amount'), Decimal('0.00'))).
-        expenses_total = expenses.aggregate(
-                    total_expense=Sum('amount', default=Decimal('0.00')),
-                )
-        incomes_total = income.aggregate(
-                            total_income=Sum('amount', default=Decimal('0.00')),
-                        )
-
-        net_cash_flow = incomes_total['total_income'] - expenses_total['total_expense']
-        savings_rate = net_cash_flow/incomes_total['total_income']  *100
+        result = get_cash_flow(user=request.user, year=year, month=month)
 
         serializer = CashFlowSerializer({
             "month": month,
             "year": year,
-            "total_income":incomes_total['total_income'],
-            "total_expenses": expenses_total['total_expense'],
-            "net_cash_flow": net_cash_flow,
-            "savings_rate" : savings_rate
+            "total_income": result.total_income,
+            "total_expenses": result.total_expenses,
+            "net_cash_flow": result.net_cash_flow,
+            "savings_rate": result.savings_rate,
         })
         return Response(serializer.data)
 
