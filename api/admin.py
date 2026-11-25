@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from api.cache import invalidate_expense_list
 from api.models import Budget, Category, Expense, ExpenseHistory, Goal, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User
 
 # Register your models here.
@@ -70,7 +71,10 @@ class ExpenseAdmin(admin.ModelAdmin):
 
     @admin.action(description="Move selected expenses to trash")
     def move_to_trash(self, request, queryset):
+        # update() doesn't send post_save, so clear the cached lists by hand.
+        user_ids = list(queryset.values_list("user_id", flat=True).distinct())
         updated = queryset.update(is_deleted=True)
+        invalidate_expense_list(*user_ids)
 
         self.message_user(
             request,

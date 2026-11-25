@@ -20,6 +20,7 @@ from rest_framework import generics
 from rest_framework.parsers import FormParser, MultiPartParser
 from api.ai import SYSTEM_PROMPT, ask_ai, build_summary, parse_expense_text
 from api.utils import month_start
+from api.cache import get_cached_expense_list, invalidate_expense_list, set_cached_expense_list
 from api.services import copy_previous_month_budgets, get_cash_flow
 from api.filters import ExpenseFilter, GoalFilter, IncomeFilter
 from api.models import Category, ExpenseHistory, ExpenseNote, Goal, Income, IncomeSource, PaymentMethod, RecurrentExpense, SavingContribution, Tag, User, Expense, Budget
@@ -63,10 +64,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
-from rest_framework.pagination import PageNumberPagination, LimitOffsetPagination
 from rest_framework.throttling import ScopedRateThrottle
 from api.ai import SYSTEM_PROMPT, ask_ai, ask_with_tools, build_summary, parse_expense_text
-
+from api.pagination import StandardPagination
 
 
 # Create your views here.
@@ -146,17 +146,36 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     filterset_class = ExpenseFilter
     search_fields = ['title']
     ordering_fields = ['amount', 'date']
-    pagination_class = PageNumberPagination
-    pagination_class.page_size = 10
-    pagination_class.page_query_param = 'pagenum'
-    pagination_class.page_size_query_param = "size"
-    pagination_class.max_page_size= 100
+    pagination_class = StandardPagination
+    # pagination_class = None
+    # pagination_class.page_size = 10
+    # pagination_class.page_query_param = 'pagenum'
+    # pagination_class.page_size_query_param = "size"
+    # pagination_class.max_page_size= 100
+    # it is better to define the pagination configuration in one file : pagination.py and use the class here
 
     def get_queryset(self):
         qs = Expense.objects.active()
         if not self.request.user.is_staff:
             qs = qs.for_user(self.request.user)
         return qs.order_by("-date")
+
+    def list(self, request, *args, **kwargs):
+        # Staff see every user's expenses, so no single user's cache version
+        # covers their list: don't cache it.
+        if request.user.is_staff:
+            return super().list(request, *args, **kwargs)
+
+        key, data = get_cached_expense_list(request)
+        if data is not None:
+            return Response(data)
+
+        # import time
+        # time.sleep(5)   # TEMPORARY: simulate a slow database on a cache miss.
+        response = super().list(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            set_cached_expense_list(key, response.data)
+        return response
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -635,6 +654,9 @@ class RecurrentExpenseViewSet(viewsets.ModelViewSet):
                     ))
 
         Expense.objects.bulk_create(to_create)
+        # bulk_create() doesn't send post_save, so the signal can't do this.
+        if to_create:
+            invalidate_expense_list(request.user.pk)
         return Response({"created": len(to_create)}, status=status.HTTP_201_CREATED)
     
     @action(detail=False, methods=['get'], url_path='upcoming')
