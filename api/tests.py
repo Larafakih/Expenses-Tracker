@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -1156,3 +1157,79 @@ class CopyBudgetsServiceTest(TestCase):
         self.assertTrue(Budget.objects.filter(user=self.user, category=self.food, year=2026, month=11, amount=Decimal("200.00")).exists())
         rent_nov = Budget.objects.get(user=self.user, category=self.rent, year=2026, month=11)
         self.assertEqual(rent_nov.amount, Decimal("950.00"))   # not overwritten with 900
+
+
+# The test settings use DummyCache; these tests need a real cache, so they use
+# an in-process one (never Redis).
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
+class ExpenseListCacheTest(APITestCase):
+    def setUp(self):
+        cache.clear()   # LocMemCache lives for the whole test run
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.other = User.objects.create_user(username="sam", password="pass12345")
+        self.category = Category.objects.create(name="Food", user=self.user)
+        self.expense = Expense.objects.create(
+            title="Lunch", amount="12.50", category=self.category, user=self.user, date=timezone.now(),
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def write(self, method, url, data=None):
+        # Invalidation runs on transaction commit. TestCase never commits, so
+        # captureOnCommitCallbacks(execute=True) runs those callbacks for us.
+        with self.captureOnCommitCallbacks(execute=True):
+            return getattr(self.client, method)(url, data, format="json")
+
+    def test_second_request_is_served_from_cache(self):
+        self.client.get("/expenses/")
+        # A cache hit doesn't touch the database at all.
+        with self.assertNumQueries(0):
+            response = self.client.get("/expenses/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+
+    def test_different_query_params_are_cached_separately(self):
+        self.client.get("/expenses/")
+        response = self.client.get("/expenses/", {"search": "nothing-matches"})
+        self.assertEqual(response.data["count"], 0)
+
+    def test_users_do_not_share_cached_lists(self):
+        self.client.get("/expenses/")
+        self.client.force_authenticate(user=self.other)
+        response = self.client.get("/expenses/")
+        self.assertEqual(response.data["count"], 0)
+
+    def test_create_update_delete_invalidate_the_cache(self):
+        self.client.get("/expenses/")
+
+        self.write("post", "/expenses/", {
+            "title": "Dinner", "amount": "20.00", "category": str(self.category.pk), "date": timezone.now().isoformat(),
+        })
+        self.assertEqual(self.client.get("/expenses/").data["count"], 2)
+
+        self.write("patch", f"/expenses/{self.expense.pk}/", {"amount": "99.00"})
+        lunch = next(e for e in self.client.get("/expenses/").data["results"] if e["title"] == "Lunch")
+        self.assertEqual(lunch["amount"], "99.00")
+
+        self.write("delete", f"/expenses/{self.expense.pk}/")
+        self.assertEqual(self.client.get("/expenses/").data["count"], 1)
+
+    def test_renaming_category_invalidates_the_cache(self):
+        self.client.get("/expenses/")
+        self.write("patch", f"/categories/{self.category.pk}/", {"name": "Groceries"})
+        result = self.client.get("/expenses/").data["results"][0]
+        self.assertEqual(result["category_name"], "Groceries")
+
+    def test_adding_note_invalidates_the_cache(self):
+        self.client.get("/expenses/")
+        self.write("post", f"/expenses/{self.expense.pk}/notes/", {"content": "paid cash"})
+        self.assertEqual(self.client.get("/expenses/").data["results"][0]["notes_count"], 1)
+
+    def test_generating_recurrent_expenses_invalidates_the_cache(self):
+        # generate uses bulk_create, which doesn't send signals.
+        RecurrentExpense.objects.create(
+            category=self.category, user=self.user, title="Rent", amount=50,
+            start_date=date(2026, 1, 1), frequency="monthly",
+        )
+        self.client.get("/expenses/")
+        self.write("post", "/recurrent-expenses/generate/", {"until_date": "2026-03-01"})
+        self.assertEqual(self.client.get("/expenses/").data["count"], 4)   # Lunch + Jan, Feb, Mar

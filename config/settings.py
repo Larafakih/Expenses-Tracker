@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import sys
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
@@ -51,16 +52,6 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = 'api.User'
-
-MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-]
 
 ROOT_URLCONF = 'config.urls'
 
@@ -211,4 +202,18 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     # OTHER SETTINGS
 }
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/0",
+        "TIMEOUT": 300,
+    }
+}
+
+# Tests must not read or write the real Redis: test users get the same ids as
+# real ones, so they could be served dev data from the cache. Tests that check
+# caching switch to LocMemCache with @override_settings.
+if sys.argv[1:2] == ["test"]:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
 
