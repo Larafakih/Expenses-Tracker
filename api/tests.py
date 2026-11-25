@@ -1233,3 +1233,37 @@ class ExpenseListCacheTest(APITestCase):
         self.client.get("/expenses/")
         self.write("post", "/recurrent-expenses/generate/", {"until_date": "2026-03-01"})
         self.assertEqual(self.client.get("/expenses/").data["count"], 4)   # Lunch + Jan, Feb, Mar
+
+# Same as ExpenseListCacheTest: the test settings use DummyCache (stores nothing),
+# so swap in an in-process cache that really keeps values.
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
+class TestHeaderExpensesListAfterCaching(APITestCase):
+    def setUp(self):
+        cache.clear()   # LocMemCache lives for the whole test run: drop other tests' entries
+        self.user = User.objects.create_user(username="lara", password="pass12345")
+        self.client.force_authenticate(user=self.user)
+
+    def test_hit_miss_header(self):
+        response = self.client.get("/expenses/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["X-Cache"], "MISS")
+
+        response = self.client.get("/expenses/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["X-Cache"], "HIT")
+
+        # Invalidation runs on transaction commit, which never happens inside a
+        # TestCase. captureOnCommitCallbacks(execute=True) runs those callbacks.
+        with self.captureOnCommitCallbacks(execute=True):
+            category = Category.objects.create(name="Food", user=self.user)
+            Expense.objects.create(
+                title="Lunch",
+                amount="12.50",
+                category=category,
+                user=self.user,
+                date=timezone.now(),
+            )
+
+        response = self.client.get("/expenses/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["X-Cache"], "MISS")

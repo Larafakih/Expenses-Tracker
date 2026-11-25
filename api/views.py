@@ -168,13 +168,14 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
         key, data = get_cached_expense_list(request)
         if data is not None:
-            return Response(data)
+            return Response(data, headers={"X-Cache": "HIT"})
 
         # import time
         # time.sleep(5)   # TEMPORARY: simulate a slow database on a cache miss.
         response = super().list(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
             set_cached_expense_list(key, response.data)
+        response["X-Cache"] = "MISS"
         return response
 
     def create(self, request, *args, **kwargs):
